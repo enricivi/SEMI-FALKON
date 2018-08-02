@@ -3,7 +3,17 @@ from time import time
 from progressbar import progressbar as bar
 
 
-def falkon(x, y, m, kernel_function, regularizer, max_iter):
+def falkon(x_test, alpha, nystrom, kernel_function):
+    y_pred = np.zeros(shape=len(x_test), dtype=np.float32)
+
+    for idx in range(len(y_pred)):
+        for i in range(len(alpha)):
+            y_pred[idx] += (alpha[i] * kernel_function(x_test[idx], nystrom[i]))
+
+    return y_pred
+
+
+def train_falkon(x, y, m, kernel_function, regularizer, max_iter):
     """
     :param x: is a matrix (size: n, features length) containing the train set
     :param y: is an array of label
@@ -13,7 +23,6 @@ def falkon(x, y, m, kernel_function, regularizer, max_iter):
     :param max_iter: maximum iterations number during the optimization
     :return: a vector of coefficients (size: m, 1) used for the future predictions
     """
-
     start = time()
     c, d = nystrom_centers(x, m)
     print("  --> Nystrom centers selected in {:.3f} seconds".format(time()-start))
@@ -22,39 +31,28 @@ def falkon(x, y, m, kernel_function, regularizer, max_iter):
     kmm = kernel_matrix(c, c, kernel_function)
     print("  --> Kernel matrix based on centroids (KMM) computed in {:.3f} seconds".format(time() - start))
 
-    kmm_rank = np.linalg.matrix_rank(M=kmm, hermitian=True)
-    t = None
-    q = None
     start = time()
-    if kmm_rank == m:
-        print("  --> Full rank KMM")
-        t = np.linalg.cholesky(a=((d @ kmm @ d) + np.eye(m)))
-    else:
-        print("  --> Rank deficient KMM (rank {})".format(kmm_rank))
-        q, _ = np.linalg.qr(a=(d @ kmm @ d))
-        t = np.linalg.cholesky(a=((q.T @ d @ kmm @ d @ q) + np.eye(m)))
+    if np.linalg.matrix_rank(M=kmm, hermitian=True) != m:
+        print("  --> Rank deficient KMM")
+    t = np.linalg.cholesky(a=((d @ kmm @ d) + np.eye(m)))
     a = np.linalg.cholesky(a=((t/m @ t.T) + regularizer*np.eye(m)))
-    print("  --> Computed Q (if KMM has a deficient rank), T and A in {:.3f} seconds".format(time()-start))
+    print("  --> Computed T and A in {:.3f} seconds".format(time()-start))
 
     start = time()
     kmn_knm = kmn_times_knm(x, c, kernel_function)
     print("  --> Computed KNM.T times KNM in {:.3f} seconds".format(time() - start))
 
     start = time()
-    r = np.linalg.solve(a, np.linalg.solve(t, q.T @ d @ kmn_times_vector(y, x, c, kernel_function)))
+    b = np.linalg.solve(a, np.linalg.solve(t, d @ kmn_times_vector(y/len(x), x, c, kernel_function)))
     print("  --> Computed B.T times Knm.T times y in {:.3f} seconds".format(time() - start))
 
     start = time()
-    beta = conjgrad(lambda b: bhb(beta=b, a=a, t=t, d=d, kmn_knm=kmn_knm/len(x), kmm=regularizer*kmm, q=q), r, max_iter)
+    beta = conjgrad(lambda beta: bhb(beta=beta, a=a, t=t, d=d, kmn_knm=kmn_knm/len(x), kmm=regularizer*kmm), b, max_iter)
     print("  --> Optimization done in {:.3f} seconds".format(time() - start))
 
-    alpha = None
-    if q is None:
-        alpha = np.linalg.solve(t, np.linalg.solve(a, beta))
-    else:
-        alpha = q @ np.linalg.solve(t, np.linalg.solve(a, beta))
+    alpha = d @ np.linalg.solve(t, np.linalg.solve(a, beta))
 
-    return d @ alpha
+    return alpha, c
 
 
 def nystrom_centers(x, m):
@@ -106,32 +104,33 @@ def kmn_times_knm(train, centroids, fun):
     return kmn_knm
 
 
-def bhb(beta, a, t, d, kmn_knm, kmm, q):
+def bhb(beta, a, t, d, kmn_knm, kmm):
     # TODO: controlla
     kmm = kmn_knm + kmm
-
-    w = None
-    if q is None:
-        w = d @ kmm @ d @ np.linalg.solve(t, np.linalg.solve(a, beta))
-    else:
-        w = q.T @ d @ kmm @ d @ q @ np.linalg.solve(t, np.linalg.solve(a, beta))
+    w = d @ kmm @ d @ np.linalg.solve(t, np.linalg.solve(a, beta))
 
     return np.linalg.solve(a.T, np.linalg.solve(t.T, w))
 
 
-def conjgrad(fun, r, max_iter):
-    beta = np.zeros(shape=len(r), dtype=np.float32)
+def conjgrad(fun_w, b, max_iter):
+    beta = np.zeros(shape=len(b), dtype=np.float32)
 
+    r = b
     p = r
     rsold = np.inner(r, r)
 
     for _ in bar(range(max_iter)):
-        ap = fun(p)
-        a = rsold / np.inner(p, ap)
-        beta = beta + (a * p)
-        r = r - (a * ap)
+        wp = fun_w(p)
+        alpha = rsold / np.inner(p, wp)
+
+        beta += (alpha * p)
+        r -= (alpha * wp)
+
         rsnew = np.inner(r, r)
-        p = r + (rsnew/rsold) * p
+        if np.sqrt(rsnew) < 1e-7:
+            break
+
+        p = r + ((rsnew / rsold) * p)
         rsold = rsnew
 
     return beta

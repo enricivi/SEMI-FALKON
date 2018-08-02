@@ -1,13 +1,14 @@
 import argparse
 import numpy as np
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import f1_score
 from time import time
 
-from falkon import falkon
+from falkon import falkon, train_falkon
 from utility.kernel import linear, gaussian
 
 
-def main(path, number_centroids, kernel_fun):
+def main(path, number_centroids, kernel_fun, max_iter):
     # loading dataset as ndarray
     dataset = np.load(path)
     print("Dataset loaded ({} points, {} features per point)".format(dataset.shape[0], dataset.shape[1]-1))
@@ -23,12 +24,16 @@ def main(path, number_centroids, kernel_fun):
     # training falkon
     print("Starting falkon training routine...")
     start = time()
-    alpha = falkon(x=x_train, y=y_train, m=number_centroids, kernel_function=kernel_fun, regularizer=1, max_iter=1000)
+    alpha, nystrom = train_falkon(x=x_train, y=y_train, m=number_centroids, kernel_function=kernel_fun, regularizer=1,
+                                  max_iter=max_iter)
     print("Training finished in {:.3f} seconds".format(time()-start))
 
-    print(alpha, alpha.shape)
     # testing falkon
-
+    y_pred = falkon(x_test=x_test, alpha=alpha, nystrom=nystrom, kernel_function=kernel_fun)
+    y_pred[np.where(y_pred < 0)[0]] = -1
+    y_pred[np.where(y_pred >= 0)[0]] = 1
+    f1 = f1_score(y_true=y_test, y_pred=y_pred)
+    print("F1 score: {:.3f}".format(f1))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -37,7 +42,9 @@ if __name__ == '__main__':
     parser.add_argument("centroids", metavar='M', type=int, help='number of elements selected as Nystrom centroids')
     parser.add_argument("--kernel", type=str, default='linear', choices=['linear', 'gaussian'],
                         help='specify the kernel')
-    parser.add_argument("--parameters", type=float, default=1,
+    parser.add_argument("--max_iterations", type=int, default=500,
+                        help="specify the maximum number of iterations during the optimization")
+    parser.add_argument("--ker_parameter", type=float, default=1,
                         help='define the parameters used for the kernel (c or sigma)')
     parser.add_argument("--gpu", type=bool, default=False, help='specify if the GPU is used (dafault = false)')
 
@@ -45,8 +52,8 @@ if __name__ == '__main__':
 
     ker = args.kernel
     if ker == 'linear':
-        ker = lambda x, z: linear(x, z, args.parameters)
+        ker = lambda x, z: linear(x, z, args.ker_parameter)
     elif ker == 'gaussian':
-        ker = lambda x, z: gaussian(x, z, args.parameters)
+        ker = lambda x, z: gaussian(x, z, args.ker_parameter)
 
-    main(path=args.dataset, number_centroids=args.centroids, kernel_fun=ker)
+    main(path=args.dataset, number_centroids=args.centroids, kernel_fun=ker, max_iter=args.max_iterations)
