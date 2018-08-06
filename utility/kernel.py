@@ -1,4 +1,4 @@
-from numpy import inner
+from numpy import inner, exp
 
 
 def linear(x, z, c):
@@ -6,4 +6,7 @@ def linear(x, z, c):
 
 
 def gaussian(x, z, s):
-    pass
+    gauss = x - z
+    gauss = -inner(gauss, gauss)
+    gauss /= (2 * (s**2))
+    return exp(gauss)
