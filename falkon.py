@@ -1,19 +1,23 @@
 import numpy as np
 from time import time
 from progressbar import progressbar as bar
+from numba import jit
+
+from utility.kernel import gaussian
 
 
-def falkon(x_test, alpha, nystrom, kernel_function):
+@jit(nopython=True)
+def falkon(x_test, alpha, nystrom, gaussian_sigma):
     y_pred = np.zeros(shape=len(x_test), dtype=np.float32)
 
     for idx in range(len(y_pred)):
         for i in range(len(alpha)):
-            y_pred[idx] += (alpha[i] * kernel_function(x_test[idx], nystrom[i]))
+            y_pred[idx] += (alpha[i] * gaussian(x_test[idx], nystrom[i], gaussian_sigma))
 
     return y_pred
 
 
-def train_falkon(x, y, m, kernel_function, regularizer, max_iter):
+def train_falkon(x, y, m, gaussian_sigma, regularizer, max_iter):
     """
     :param x: is a matrix (size: n, features length) containing the train set
     :param y: is an array of label
@@ -28,7 +32,7 @@ def train_falkon(x, y, m, kernel_function, regularizer, max_iter):
     print("  --> Nystrom centers selected in {:.3f} seconds".format(time()-start))
 
     start = time()
-    kmm = kernel_matrix(c, c, kernel_function)
+    kmm = kernel_matrix(c, c, gaussian_sigma)
     print("  --> Kernel matrix based on centroids (KMM) computed in {:.3f} seconds".format(time() - start))
 
     start = time()
@@ -40,14 +44,12 @@ def train_falkon(x, y, m, kernel_function, regularizer, max_iter):
     print("  --> Computed T and A in {:.3f} seconds".format(time()-start))
 
     start = time()
-    kmn_knm = kmn_times_knm(x, c, kernel_function)
-    print("  --> Computed KNM.T times KNM in {:.3f} seconds".format(time() - start))
+    vec, kmn_knm = knm(vector=y, train=x, centroids=c, sigma=gaussian_sigma)
+    print("  --> Computed KNM matrices in {:.3f} seconds".format(time() - start))
 
     start = time()
-    b = np.linalg.solve(a, np.linalg.solve(t, d @ kmn_times_vector(vector=y, train=x, centroids=c,
-                                                                   fun=kernel_function)))
-    b /= len(y)
-    print("  --> Computed B.T times Knm.T times y in {:.3f} seconds".format(time() - start))
+    b = np.linalg.solve(a, np.linalg.solve(t, d @ vec)) / len(y)
+    print("  --> Computed b in {:.3f} seconds".format(time() - start))
 
     start = time()
     beta = conjgrad(lambda _beta: bhb(beta=_beta, a=a, t=t, d=d, kmn_knm=kmn_knm/len(y), kmm=regularizer*kmm),
@@ -65,43 +67,35 @@ def nystrom_centers(x, m):
     return c, d
 
 
-def kernel_matrix(points1, points2, fun):
-    kernels = np.empty(shape=(len(points1), len(points2)), dtype=np.float32)
+@jit(nopython=True)
+def kernel_matrix(points1, points2, sigma):
+    kernel_mtr = np.empty(shape=(len(points1), len(points2)), dtype=np.float32)
 
-    for i in range(kernels.shape[0]):
-        for j in range(kernels.shape[1]):
-            kernels[i, j] = fun(points1[i], points2[j])
+    for r in range(kernel_mtr.shape[0]):
+        for c in range(kernel_mtr.shape[1]):
+            kernel_mtr[r, c] = gaussian(points1[r], points2[c], sigma)
 
-    return kernels
+    return kernel_mtr
 
 
-def kmn_times_vector(vector, train, centroids, fun):
+@jit(nopython=True)
+def knm(vector, train, centroids, sigma):
+    # computes KNM.T times KNM and KNM.T times vector
     m = len(centroids)
     n = len(train)
 
-    product = np.zeros(shape=m, dtype=np.float32)
-    for i in bar(range(0, n, m)):
+    vec = np.zeros(shape=m, dtype=np.float32)
+    kmn_knm = np.zeros(shape=(m, m), dtype=np.float32)
+    for i in range(0, n, m):
         subset_train = train[i:i + m, :]
         subset_vector = vector[i:i + m]
-        tmp_kernel_matrix = kernel_matrix(centroids, subset_train, fun)
 
-        product += tmp_kernel_matrix @ subset_vector
+        tmp_kernel_matrix = kernel_matrix(centroids, subset_train, sigma)
 
-    return product
+        vec += tmp_kernel_matrix @ subset_vector
+        kmn_knm += tmp_kernel_matrix @ tmp_kernel_matrix.T
 
-
-def kmn_times_knm(train, centroids, fun):
-    m = len(centroids)
-    n = len(train)
-
-    kmn_knm = np.zeros(shape=(m, m), dtype=np.float32)
-    for i in bar(range(0, n, m)):
-        subset_train = train[i:i+m, :]
-        tmp_kernel_matrix = kernel_matrix(subset_train, centroids, fun)
-
-        kmn_knm += tmp_kernel_matrix.T @ tmp_kernel_matrix
-
-    return kmn_knm
+    return vec, kmn_knm
 
 
 def bhb(beta, a, t, d, kmn_knm, kmm):

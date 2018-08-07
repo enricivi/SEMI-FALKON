@@ -6,10 +6,9 @@ from sklearn.metrics import f1_score, roc_auc_score
 from time import time
 
 from falkon import falkon, train_falkon
-from utility.kernel import linear, gaussian
 
 
-def main(path, number_centroids, lmb, kernel_fun, max_iter):
+def main(path, number_centroids, lmb, gauss_sigma, max_iter):
     # loading dataset as ndarray
     dataset = np.load(path)
     print("Dataset loaded ({} points, {} features per point)".format(dataset.shape[0], dataset.shape[1]-1))
@@ -31,13 +30,13 @@ def main(path, number_centroids, lmb, kernel_fun, max_iter):
     # training falkon
     print("Starting falkon training routine...")
     start = time()
-    alpha, nystrom = train_falkon(x=x_train, y=y_train, m=number_centroids, kernel_function=kernel_fun, regularizer=lmb,
+    alpha, nystrom = train_falkon(x=x_train, y=y_train, m=number_centroids, gaussian_sigma=gauss_sigma, regularizer=lmb,
                                   max_iter=max_iter)
     print("Training finished in {:.3f} seconds".format(time()-start))
 
     # testing falkon
     print("Starting falkon testing routine...")
-    y_pred = np.sign(falkon(x_test=x_test, alpha=alpha, nystrom=nystrom, kernel_function=kernel_fun))
+    y_pred = np.sign(falkon(x_test=x_test, alpha=alpha, nystrom=nystrom, gaussian_sigma=gauss_sigma))
     f1 = f1_score(y_true=y_test, y_pred=y_pred)
     auc = roc_auc_score(y_true=y_test, y_score=y_pred)
     print("F1 score: {:.3f}".format(f1))
@@ -60,11 +59,5 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    ker = args.kernel
-    if ker == 'linear':
-        ker = lambda x, z: linear(x, z, args.ker_parameter)
-    elif ker == 'gaussian':
-        ker = lambda x, z: gaussian(x, z, args.ker_parameter)
-
-    main(path=args.dataset, number_centroids=args.centroids, lmb=args.regularizer,
-         kernel_fun=ker, max_iter=args.max_iterations)
+    main(path=args.dataset, number_centroids=args.centroids, lmb=args.regularizer, gauss_sigma=args.ker_parameter,
+         max_iter=args.max_iterations)
