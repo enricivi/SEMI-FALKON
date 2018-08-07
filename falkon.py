@@ -67,7 +67,7 @@ def nystrom_centers(x, m):
     return c, d
 
 
-@jit(nopython=True)
+@jit(nopython=True, nogil=True)
 def kernel_matrix(points1, points2, sigma):
     kernel_mtr = np.empty(shape=(len(points1), len(points2)), dtype=np.float32)
 
@@ -78,7 +78,7 @@ def kernel_matrix(points1, points2, sigma):
     return kernel_mtr
 
 
-@jit(nopython=True)
+@jit
 def knm(vector, train, centroids, sigma):
     # computes KNM.T times KNM and KNM.T times vector
     m = len(centroids)
@@ -86,7 +86,7 @@ def knm(vector, train, centroids, sigma):
 
     vec = np.zeros(shape=m, dtype=np.float32)
     kmn_knm = np.zeros(shape=(m, m), dtype=np.float32)
-    for i in range(0, n, m):
+    for i in bar(range(0, n, m)):
         subset_train = train[i:i + m, :]
         subset_vector = vector[i:i + m]
 
