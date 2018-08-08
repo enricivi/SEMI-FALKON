@@ -7,7 +7,7 @@ def linear(x, z, c):
     return vdot(x, z) + c
 
 
-@jit(nopython=True)
+@jit('float32(float32[:], float32[:], float32)', nopython=True)
 def gaussian(x, z, s):
     gauss = x - z
     gauss = -vdot(gauss, gauss)
