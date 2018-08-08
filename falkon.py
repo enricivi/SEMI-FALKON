@@ -78,16 +78,14 @@ def kmn_knm_vector(vec, train, nystrom, sigma, pool):
     res = np.zeros(shape=m, dtype=np.float32)
     for i in range(0, len(train), m*pool._max_workers):
         works = []
-        subset_vecs = []
-        for j in range(i, i + (m * pool._max_workers), m):
+        for j in range(i, i + (m*pool._max_workers), m):
             subset_train = train[i:i + m, :]
-            subset_vecs.append(j)
 
             works.append(pool.submit(kernel_matrix, subset_train, nystrom, sigma))
 
-        for w, j in zip(works, subset_vecs):
+        for w in works:
             subset_knm = w.result()
-            res += (subset_knm.T @ (subset_knm @ vec[j:j + m]))
+            res += (subset_knm.T @ (subset_knm @ vec))
 
     return res
 
