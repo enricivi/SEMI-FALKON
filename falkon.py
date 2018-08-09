@@ -37,7 +37,7 @@ def train_falkon(x, y, m, gaussian_sigma, regularizer, max_iter):
     a = np.linalg.cholesky(a=(((t @ t.T)/m) + regularizer*np.eye(m)))
     print("  --> Computed T and A in {:.3f} seconds".format(time()-start))
 
-    pool = PoolExecutor(max_workers=cpu_count())
+    pool = PoolExecutor(max_workers=8)
     print("  --> Defined a Thread Pool with {} workers".format(pool._max_workers))
 
     start = time()
@@ -94,7 +94,7 @@ def kmn_vector(vec, train, nystrom, sigma, pool):
     m = len(nystrom)
 
     res = np.zeros(shape=m)
-    for i in range(0, len(train), m*pool._max_workers):
+    for i in bar(range(0, len(train), m*pool._max_workers)):
         works = []
         subset_vecs = []
         for j in range(i, i + (m*pool._max_workers), m):
