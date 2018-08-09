@@ -11,7 +11,7 @@ from utility.kernel import gaussian
 
 @jit(nopython=True)
 def falkon(x_test, alpha, nystrom, gaussian_sigma):
-    y_pred = np.zeros(shape=len(x_test), dtype=np.float32)
+    y_pred = np.zeros(shape=len(x_test))
 
     for idx in range(len(y_pred)):
         for i in range(len(alpha)):
@@ -33,7 +33,7 @@ def train_falkon(x, y, m, gaussian_sigma, regularizer, max_iter):
     rank = np.linalg.matrix_rank(M=kmm, hermitian=True)
     if rank != m:
         print("  --> Rank deficient KMM ({} instead of {})".format(rank, m))
-    t = np.linalg.cholesky(a=(kmm + (1e-5*m*np.eye(m))))
+    t = np.linalg.cholesky(a=(kmm + (np.finfo(kmm.dtype).eps*m*np.eye(m))))
     a = np.linalg.cholesky(a=(((t @ t.T)/m) + regularizer*np.eye(m)))
     print("  --> Computed T and A in {:.3f} seconds".format(time()-start))
 
@@ -61,9 +61,9 @@ def nystrom_centers(x, m):
     return c
 
 
-@jit('float32[:, :](float32[:, :], float32[:, :], float32)', nopython=True)
+@jit(nopython=True)
 def kernel_matrix(points1, points2, sigma):
-    kernel_mtr = np.empty(shape=(len(points1), len(points2)), dtype=np.float32)
+    kernel_mtr = np.empty(shape=(len(points1), len(points2)))
 
     for r in range(kernel_mtr.shape[0]):
         for c in range(kernel_mtr.shape[1]):
@@ -75,7 +75,7 @@ def kernel_matrix(points1, points2, sigma):
 def kmn_knm_vector(vec, train, nystrom, sigma, pool):
     m = len(nystrom)
 
-    res = np.zeros(shape=m, dtype=np.float32)
+    res = np.zeros(shape=m)
     for i in range(0, len(train), m*pool._max_workers):
         works = []
         for j in range(i, i + (m*pool._max_workers), m):
@@ -93,7 +93,7 @@ def kmn_knm_vector(vec, train, nystrom, sigma, pool):
 def kmn_vector(vec, train, nystrom, sigma, pool):
     m = len(nystrom)
 
-    res = np.zeros(shape=m, dtype=np.float32)
+    res = np.zeros(shape=m)
     for i in range(0, len(train), m*pool._max_workers):
         works = []
         subset_vecs = []
@@ -116,7 +116,7 @@ def bhb(beta, a, t, train, nystrom, s, lmb, pool):
 
 
 def conjgrad(fun_w, b, max_iter):
-    beta = np.zeros(shape=len(b), dtype=np.float32)
+    beta = np.zeros(shape=len(b))
 
     r = b
     p = r

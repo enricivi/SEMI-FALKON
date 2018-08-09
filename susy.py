@@ -10,15 +10,16 @@ from falkon import falkon, train_falkon
 
 def main(path, number_centroids, lmb, gauss_sigma, max_iter):
     # loading dataset as ndarray
-    dataset = np.load(path)
+    dataset = np.load(path).astype(np.float64)
     print("Dataset loaded ({} points, {} features per point)".format(dataset.shape[0], dataset.shape[1]-1))
 
     # adjusting label's range {-1, 1}
     dataset[:, 0] = (2 * dataset[:, 0]) - 1
 
-    # defining dataset
+    # defining train and test set
     start = time()
-    x_train, x_test, y_train, y_test = train_test_split(dataset[:, 1:], dataset[:, 0], test_size=0.05, random_state=91)
+    x_train, x_test, y_train, y_test = train_test_split(dataset[:, 1:], dataset[:, 0], test_size=0.2, random_state=7)
+    dataset = None
     print("Train and test set defined in {:.3f} seconds ({} train points)".format(time()-start, len(x_train)))
 
     # removing the mean and scaling to unit variance
