@@ -2,7 +2,7 @@ import argparse
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import f1_score, roc_auc_score
+from sklearn.metrics import f1_score
 from time import time
 
 from falkon import falkon, train_falkon
@@ -39,9 +39,7 @@ def main(path, number_centroids, lmb, gauss_sigma, max_iter):
     print("Starting falkon testing routine...")
     y_pred = np.sign(falkon(x_test=x_test, alpha=alpha, nystrom=nystrom, gaussian_sigma=gauss_sigma))
     f1 = f1_score(y_true=y_test, y_pred=y_pred)
-    auc = roc_auc_score(y_true=y_test, y_score=y_pred)
     print("F1 score: {:.3f}".format(f1))
-    print("Area Under ROC Curve score: {:.3f}".format(auc))
 
 
 if __name__ == '__main__':

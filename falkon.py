@@ -11,13 +11,12 @@ from utility.kernel import gaussian
 
 @jit(nopython=True)
 def falkon(x_test, alpha, nystrom, gaussian_sigma):
-    y_pred = np.zeros(shape=len(x_test))
+    K = np.empty(shape=(len(x_test), len(nystrom)))
+    for i in range(K.shape[0]):
+        for j in range(K.shape[1]):
+            K[i, j] = gaussian(x_test[i], nystrom[j], gaussian_sigma)
 
-    for idx in range(len(y_pred)):
-        for i in range(len(alpha)):
-            y_pred[idx] += (alpha[i] * gaussian(x_test[idx], nystrom[i], gaussian_sigma))
-
-    return y_pred
+    return np.sum(a=(K * alpha), axis=1)
 
 
 def train_falkon(x, y, m, gaussian_sigma, regularizer, max_iter):
@@ -33,8 +32,8 @@ def train_falkon(x, y, m, gaussian_sigma, regularizer, max_iter):
     rank = np.linalg.matrix_rank(M=kmm, hermitian=True)
     if rank != m:
         print("  --> Rank deficient KMM ({} instead of {})".format(rank, m))
-    t = np.linalg.cholesky(a=(kmm + (np.finfo(kmm.dtype).eps*m*np.eye(m))))
-    a = np.linalg.cholesky(a=(((t @ t.T)/m) + regularizer*np.eye(m)))
+    t = np.linalg.cholesky(a=(kmm + (np.finfo(kmm.dtype).eps*m*np.eye(m)))).T
+    a = np.linalg.cholesky(a=(((t @ t.T)/m) + regularizer*np.eye(m))).T
     print("  --> Computed T and A in {:.3f} seconds".format(time()-start))
 
     pool = PoolExecutor(max_workers=8)
@@ -57,7 +56,6 @@ def train_falkon(x, y, m, gaussian_sigma, regularizer, max_iter):
 
 def nystrom_centers(x, m):
     c = x[np.random.choice(a=x.shape[0], size=m, replace=False), :]
-    # d = np.diag(v=np.ones(shape=m))
     return c
 
 
@@ -79,9 +77,7 @@ def kmn_knm_vector(vec, train, nystrom, sigma, pool):
     for i in range(0, len(train), m*pool._max_workers):
         works = []
         for j in range(i, i + (m*pool._max_workers), m):
-            subset_train = train[i:i + m, :]
-
-            works.append(pool.submit(kernel_matrix, subset_train, nystrom, sigma))
+            works.append(pool.submit(kernel_matrix, train[i:i + m, :], nystrom, sigma))
 
         for w in works:
             subset_knm = w.result()
@@ -98,10 +94,9 @@ def kmn_vector(vec, train, nystrom, sigma, pool):
         works = []
         subset_vecs = []
         for j in range(i, i + (m*pool._max_workers), m):
-            subset_train = train[j:j + m, :]
             subset_vecs.append(j)
 
-            works.append(pool.submit(kernel_matrix, nystrom, subset_train, sigma))
+            works.append(pool.submit(kernel_matrix, nystrom, train[j:j + m, :], sigma))
 
         for w, j in zip(works, subset_vecs):
             res += (w.result() @ vec[j:j + m])
@@ -112,7 +107,7 @@ def kmn_vector(vec, train, nystrom, sigma, pool):
 def bhb(beta, a, t, train, nystrom, s, lmb, pool):
     _beta = kmn_knm_vector(vec=np.linalg.solve(t, np.linalg.solve(a, beta)),
                            train=train, nystrom=nystrom, sigma=s, pool=pool)
-    return np.linalg.solve(a.T, np.linalg.solve(t.T, ((_beta / len(train)) + (lmb * np.linalg.solve(a, beta)))))
+    return np.linalg.solve(a.T, np.linalg.solve(t.T, (_beta / len(train)) + (lmb * np.linalg.solve(a, beta))))
 
 
 def conjgrad(fun_w, b, max_iter):
