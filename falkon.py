@@ -16,7 +16,7 @@ def falkon(x_test, alpha, nystrom, gaussian_sigma):
         for j in range(K.shape[1]):
             K[i, j] = gaussian(x_test[i], nystrom[j], gaussian_sigma)
 
-    return np.sum(a=(K * alpha), axis=1)
+    return np.sum(K * alpha, axis=1)
 
 
 def train_falkon(x, y, m, gaussian_sigma, regularizer, max_iter):
