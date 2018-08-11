@@ -9,14 +9,14 @@ from multiprocessing import cpu_count
 from utility.kernel import gaussian
 
 
-@jit(nopython=True)
 def falkon(x_test, alpha, nystrom, gaussian_sigma):
-    K = np.empty(shape=(len(x_test), len(nystrom)))
-    for i in range(K.shape[0]):
-        for j in range(K.shape[1]):
-            K[i, j] = gaussian(x_test[i], nystrom[j], gaussian_sigma)
+    m = len(alpha)
 
-    return np.sum(K * alpha, axis=1)
+    y_pred = np.empty(shape=len(x_test))
+    for i in bar(range(0, len(x_test), m)):
+        y_pred[i: i + m] = np.sum(kernel_matrix(x_test[i: i + m], nystrom, gaussian_sigma) * alpha, axis=1)
+
+    return y_pred
 
 
 def train_falkon(x, y, m, gaussian_sigma, regularizer, max_iter):
