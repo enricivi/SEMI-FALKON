@@ -36,11 +36,11 @@ def train_falkon(x, y, m, gaussian_sigma, regularizer, max_iter):
     a = np.linalg.cholesky(a=(((t @ t.T)/m) + regularizer*np.eye(m))).T
     print("  --> Computed T and A in {:.3f} seconds".format(time()-start))
 
-    pool = PoolExecutor(max_workers=8)
-    print("  --> Defined a Thread Pool with {} workers".format(pool._max_workers))
+    pool = PoolExecutor(max_workers=4)
+    print("  --> Defined a Process Pool with {} workers".format(pool._max_workers))
 
     start = time()
-    b = np.linalg.solve(a, np.linalg.solve(t, kmn_vector(vec=y, train=x, nystrom=c, sigma=gaussian_sigma, pool=pool)))
+    b = np.linalg.solve(a.T, np.linalg.solve(t.T, kmn_vector(vec=y, train=x, nystrom=c, sigma=gaussian_sigma, pool=pool)))
     b /= len(y)
     print("  --> Computed b in {:.3f} seconds".format(time() - start))
 
