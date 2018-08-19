@@ -1,15 +1,12 @@
-from numpy import vdot, exp
-from numba import jit
+from numpy import exp, power, sum
+from numpy.linalg import norm
 
 
-@jit(nopython=True)
 def linear(x, z, c):
-    return vdot(x, z) + c
+    pass
 
 
-@jit(nopython=True)
 def gaussian(x, z, s):
-    gauss = x - z
-    gauss = -vdot(gauss, gauss)
-    gauss /= (2 * (s**2))
+    gauss = power(norm(x=z - x, axis=1, ord=2), 2)
+    gauss /= (-2 * (s**2))
     return exp(gauss)
