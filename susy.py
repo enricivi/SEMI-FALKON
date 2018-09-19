@@ -6,14 +6,15 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import f1_score
 from time import time
 
-from falkon import falkon, train_falkon
+# from falkon import falkon, train_falkon
+from falkon import Falkon
 from utility.kernel import *
 
 
 def main(path, number_centroids, lmb, kernel, max_iter, xp):
     # loading dataset as ndarray
     dataset = np.load(path).astype(np.float64)
-    print("Dataset loaded ({} points, {} features per point)".format(dataset.shape[0], dataset.shape[1]-1))
+    print("Dataset loaded ({} points, {} features per point)".format(dataset.shape[0], dataset.shape[1] - 1))
 
     # adjusting label's range {-1, 1}
     dataset[:, 0] = (2 * dataset[:, 0]) - 1
@@ -33,13 +34,13 @@ def main(path, number_centroids, lmb, kernel, max_iter, xp):
     # training falkon
     print("Starting falkon training routine...")
     start = time()
-    alpha, nystrom = train_falkon(x=x_train, y=y_train, m=number_centroids, kernel=kernel, lmb=lmb, max_iter=max_iter,
-                                  xp=xp)
-    print("Training finished in {:.3f} seconds".format(time()-start))
+    falkon = Falkon(nystrom_length=number_centroids, gamma=lmb, kernel_fun=kernel)
+    falkon.fit(x_train, y_train)
+    print("Training finished in {:.3f} seconds".format(time() - start))
 
     # testing falkon
     print("Starting falkon testing routine...")
-    y_pred = np.sign(falkon(x_test=x_test, alpha=alpha, nystrom=nystrom, kernel=kernel))
+    y_pred = np.sign(falkon.predict(x_test))
     f1 = f1_score(y_true=y_test, y_pred=y_pred)
     acc = np.sum(y_test == y_pred) / len(y_test)
     print("F1 score: {:.3f}".format(f1))

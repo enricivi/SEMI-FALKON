@@ -1,128 +1,128 @@
 import numpy as np
+
+import psutil
+
+from sklearn.base import BaseEstimator
+from sklearn.utils import check_random_state
 from time import time
-from progressbar import progressbar as bar
-
-from concurrent.futures import ProcessPoolExecutor as PoolExecutor
 
 
-def falkon(x_test, alpha, nystrom, kernel):
-    m = len(alpha)
+class Falkon(BaseEstimator):
+    def __init__(self, nystrom_length, gamma, kernel_fun, optimizer_max_iter=20, gpu=False, memory_fraction=0.90, random_state=None):
+        self.nystrom_length = nystrom_length
+        self.gamma = gamma
+        self.kernel_fun = kernel_fun
+        self.optimizer_max_iter = optimizer_max_iter
+        self.gpu = gpu
+        self.memory_fraction = memory_fraction
+        self.random_state = random_state
 
-    y_pred = np.empty(shape=len(x_test))
-    for i in bar(range(0, len(x_test), m)):
-        y_pred[i: i + m] = np.sum(kernel_matrix(x_test[i: i + m], nystrom, kernel) * alpha, axis=1)
+        # Evaluated parameters
+        self.random_state_ = None
+        self.nystrom_centers_ = None
+        self.T_ = None
+        self.A_ = None
+        self.weights_ = None
 
-    return y_pred
+    def fit(self, X, y):
+        self.random_state_ = check_random_state(self.random_state)
+        self.nystrom_centers_ = X[self.random_state_.choice(a=X.shape[0], size=self.nystrom_length, replace=False), :]
 
+        nystrom_kernels = self.__compute_kernels_matrix(self.nystrom_centers_, self.nystrom_centers_)
 
-def train_falkon(x, y, m, kernel, lmb, max_iter, xp):
-    start = time()
-    c = nystrom_centers(x, m)
-    print("  --> Nystrom centers selected in {:.3f} seconds".format(time()-start))
+        epsilon = np.eye(self.nystrom_length)
+        self.T_ = np.linalg.cholesky(a=nystrom_kernels + (np.finfo(nystrom_kernels.dtype).eps * self.nystrom_length * epsilon)).T
+        self.A_ = np.linalg.cholesky(a=np.divide(self.T_ @ self.T_.T, self.nystrom_length) + (self.gamma * epsilon)).T
 
-    start = time()
-    kmm = kernel_matrix(c, c, kernel)
-    print("  --> Kernel matrix based on centroids (KMM) computed in {:.3f} seconds".format(time() - start))
+        k, b = self.__compute_k_and_incomplete_b(X, y)
+        b = (np.linalg.solve(self.A_.T, np.linalg.solve(self.T_.T, b)) / np.sqrt(self.nystrom_length))
 
-    start = time()
-    t = np.linalg.cholesky(a=(kmm + (np.finfo(kmm.dtype).eps*m*np.eye(m)))).T
-    a = np.linalg.cholesky(a=(((t @ t.T)/m) + lmb*np.eye(m))).T
-    print("  --> Computed T and A in {:.3f} seconds".format(time()-start))
+        beta = self.__conjugate_gradient(w=lambda _beta: self.__compute_w(k, _beta), b=b)
 
-    workers = int(15000000000/(np.power(m, 2)*64))
-    workers = workers if workers > 0 else 1
-    pool = PoolExecutor(max_workers=workers)
-    print("  --> Defined a Process Pool with {} workers".format(pool._max_workers))
+        self.weights_ = np.linalg.solve(self.T_, np.linalg.solve(self.A_, beta)) / np.sqrt(self.nystrom_length)
 
-    start = time()
-    b = np.linalg.solve(a.T, np.linalg.solve(t.T, kmn_vector(vec=y, train=x, nystrom=c, kernel=kernel, pool=pool)))
-    b /= len(y)
-    print("  --> Computed b in {:.3f} seconds".format(time() - start))
+        return self
 
-    start = time()
-    beta = conjgrad(lambda _beta: bhb(beta=_beta, a=a, t=t, train=x, nystrom=c, kernel=kernel, lmb=lmb, pool=pool),
-                    b=b, max_iter=max_iter)
-    print("  --> Optimization done in {:.3f} seconds".format(time() - start))
+    def predict(self, X):
+        y_pred = np.empty(shape=X.shape[0], dtype=np.float64)
 
-    alpha = np.linalg.solve(t, np.linalg.solve(a, beta))
+        start_ = 0
+        print("  predict progress: {:.2f} %".format((start_ / X.shape[0]) * 100), end='\r')
+        while start_ < X.shape[0]:
+            n_points = self.__fill_memory(start=start_, data_length=X.shape[0], dtype=y_pred.dtype)
 
-    return alpha, c
+            tmp_kernel_matrix = self.__compute_kernels_matrix(X[start_:start_+n_points, :], self.nystrom_centers_)
 
+            y_pred[start_:start_+n_points] = np.sum(a=tmp_kernel_matrix * self.weights_, axis=1)
 
-def nystrom_centers(x, m):
-    c = x[np.random.choice(a=x.shape[0], size=m, replace=False), :]
-    return c
+            tmp_kernel_matrix = None  # cleaning memory
 
+            start_ += n_points
+            print("  predict progress: {:.2f} %".format((start_ / X.shape[0]) * 100), end='\r')
+        print('')
 
-def kernel_matrix(points1, points2, kernel):
-    kernel_mtr = np.empty(shape=(len(points1), len(points2)))
+        return y_pred
 
-    for i in range(kernel_mtr.shape[0]):
-        kernel_mtr[i, :] = kernel(points1[i], points2)
+    def __compute_kernels_matrix(self, points1, points2):
+        nystrom_kernels = np.empty(shape=(len(points1), len(points2)), dtype=np.float64)
 
-    return kernel_mtr
+        for idx in range(nystrom_kernels.shape[0]):
+            nystrom_kernels[idx, :] = self.kernel_fun(points1[idx], points2)
 
+        return nystrom_kernels
 
-def kmn_knm_vector(vec, train, nystrom, kernel, pool):
-    m = len(nystrom)
+    def __compute_k_and_incomplete_b(self, X, y):
+        k = np.zeros(shape=(self.nystrom_length, self.nystrom_length), dtype=np.float64)
+        b = np.zeros(shape=self.nystrom_length, dtype=np.float64)
 
-    res = np.zeros(shape=m)
-    for i in range(0, len(train), m*pool._max_workers):
-        works = []
-        for j in range(i, i + (m*pool._max_workers), m):
-            works.append(pool.submit(kernel_matrix, train[i:i + m, :], nystrom, kernel))
+        start_ = 0
+        print("  fit progress: {:.2f} %".format((start_ / X.shape[0]) * 100), end='\r')
+        while start_ < X.shape[0]:
+            n_points = self.__fill_memory(start=start_, data_length=X.shape[0], dtype=k.dtype)
 
-        for w in works:
-            subset_knm = w.result()
-            res += (subset_knm.T @ (subset_knm @ vec))
+            tmp_kernels_matrix_t = self.__compute_kernels_matrix(self.nystrom_centers_, X[start_:start_+n_points, :])
 
-    return res
+            k += (tmp_kernels_matrix_t @ tmp_kernels_matrix_t.T)
+            b += (tmp_kernels_matrix_t @ y[start_:start_+n_points])
 
+            tmp_kernels_matrix_t = None  # cleaning memory
 
-def kmn_vector(vec, train, nystrom, kernel, pool):
-    m = len(nystrom)
+            start_ += n_points
+            print("  fit progress: {:.2f} %".format((start_ / X.shape[0]) * 100), end='\r')
+        print('')
 
-    res = np.zeros(shape=m)
-    for i in bar(range(0, len(train), m*pool._max_workers)):
-        works = []
-        subset_vecs = []
-        for j in range(i, i + (m*pool._max_workers), m):
-            subset_vecs.append(j)
+        return k, b
 
-            works.append(pool.submit(kernel_matrix, nystrom, train[j:j + m, :], kernel))
+    def __compute_w(self, K, beta):
+        zeta = np.linalg.solve(self.A_, beta)
 
-        for w, j in zip(works, subset_vecs):
-            res += (w.result() @ vec[j:j + m])
+        bhb_beta = self.gamma * zeta
+        bhb_beta += (np.linalg.solve(self.T_.T, K @ np.linalg.solve(self.T_, zeta)) / self.nystrom_length)
+        bhb_beta = np.linalg.solve(self.A_.T, bhb_beta)
 
-    return res
+        return bhb_beta
 
+    def __fill_memory(self, start, data_length, dtype):
+        available_memory = psutil.virtual_memory().available * self.memory_fraction
+        return int(min(available_memory / (self.nystrom_length * dtype.itemsize * 2), data_length - start))
 
-def bhb(beta, a, t, train, nystrom, kernel, lmb, pool):
-    z = np.linalg.solve(a, beta)
-    _beta = kmn_knm_vector(vec=np.linalg.solve(t, z), train=train, nystrom=nystrom, kernel=kernel, pool=pool)
-    return np.linalg.solve(a.T, np.linalg.solve(t.T, (_beta / len(train)) + (lmb * z)))
+    def __conjugate_gradient(self, w, b):
+        beta = np.zeros(shape=self.nystrom_length)
 
+        r = b
+        p = r
+        rs_old = np.inner(r, r)
 
-def conjgrad(fun_w, b, max_iter):
-    beta = np.zeros(shape=len(b))
+        for _ in range(self.optimizer_max_iter):
+            wp = w(p)
+            alpha = rs_old / np.inner(p, wp)
 
-    r = b
-    p = r
-    rsold = np.inner(r, r)
+            beta += (alpha * p)
+            r -= (alpha * wp)
 
-    for _ in bar(range(max_iter)):
-        wp = fun_w(p)
-        alpha = rsold / np.inner(p, wp)
+            rs_new = np.inner(r, r)
 
-        beta += (alpha * p)
-        r -= (alpha * wp)
+            p = r + ((rs_new / rs_old) * p)
+            rs_old = rs_new
 
-        rsnew = np.inner(r, r)
-        if np.sqrt(rsnew) < 1e-7:
-            print("  --> stop criterion verified")
-            break
-
-        p = r + ((rsnew / rsold) * p)
-        rsold = rsnew
-
-    return beta
+        return beta

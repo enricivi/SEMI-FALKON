@@ -1,4 +1,4 @@
-from numpy import exp, power, sum
+from numpy import exp, power
 from numpy.linalg import norm
 
 
