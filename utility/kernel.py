@@ -1,10 +1,12 @@
-from numpy import dot
+from numpy import exp, power
+from numpy.linalg import norm
 
 
 def linear(x, z, c):
-    # data are listed for columns
-    return dot(x, z.T) + c
+    pass
 
 
 def gaussian(x, z, s):
-    pass
+    gauss = power(norm(x=z - x, axis=1, ord=2), 2)
+    gauss /= (-2 * (s**2))
+    return exp(gauss)

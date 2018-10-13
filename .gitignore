@@ -326,3 +326,4 @@ $RECYCLE.BIN/
 
 # custom
 dataset/
+*.sh
