@@ -2,7 +2,6 @@ import argparse
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import f1_score
 from time import time
 
 # from falkon import falkon, train_falkon
@@ -34,14 +33,14 @@ def main(path, number_centroids, gamma, kernel_fun, kernel_param, max_iter, gpu)
     start = time()
     falkon = Falkon(nystrom_length=number_centroids, gamma=gamma, kernel_fun=kernel_fun, kernel_param=kernel_param, optimizer_max_iter=max_iter, gpu=gpu)
     falkon.fit(x_train, y_train)
-    print("Training finished in {:.3f} seconds".format(time() - start))
+    print("Training finished in {:.3f} minutes".format((time() - start)/60))
 
     # testing falkon
     print("Starting falkon testing routine...")
-    y_pred = np.sign(falkon.predict(x_test))
-    f1 = f1_score(y_true=y_test, y_pred=y_pred)
+    y_pred = np.asarray([-1. if (pred < 0) else 1. for pred in falkon.predict(x_test)])
+    print(y_pred)
+    print(np.sum(y_pred == 0), np.sum(y_pred == 1), np.sum(y_pred == -1))
     acc = np.sum(y_test == y_pred) / len(y_test)
-    print("F1 score: {:.3f}".format(f1))
     print("Accuracy: {:.3f}".format(acc))
 
 
