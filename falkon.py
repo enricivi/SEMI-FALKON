@@ -113,8 +113,8 @@ class Falkon(BaseEstimator):
     def __compute_kernels_matrix_on_gpu(self, points1_gpu, points2_gpu, block, grid, out_gpu=None):
         nystrom_kernels = cp.empty(shape=(points1_gpu.shape[0], points2_gpu.shape[0]), dtype=points1_gpu.dtype, order='F') if out_gpu is None else out_gpu
         self.gauss_kernel(grid=grid, block=block, shared_mem=block[0]*self.nystrom_centers_.shape[1]*4,
-                          args=(points1_gpu, points2_gpu, nystrom_kernels, nystrom_kernels.shape[0], nystrom_kernels.shape[1],
-                                self.nystrom_centers_.shape[1], cp.float32(self.kernel_param))
+                          args=(points1_gpu, points2_gpu, nystrom_kernels, np.int32(nystrom_kernels.shape[0]), np.int32(nystrom_kernels.shape[1]),
+                                np.int32(self.nystrom_centers_.shape[1]), np.float32(self.kernel_param))
                           )
 
         return nystrom_kernels
@@ -159,12 +159,8 @@ class Falkon(BaseEstimator):
         n_points = self.__fill_memory(start=0, data_length=x.shape[0], dtype=arr.dtype)
         k = None
         for idx in range(0, x.shape[0], n_points):
-            if transpose:
-                k = self.__compute_kernels_matrix(self.upload(arr=x[idx:idx + n_points, :]), self.nystrom_centers_)
-                out = xp.add(out, xp.matmul(k.T, xp.matmul(k, arr)))
-            else:
-                k = self.__compute_kernels_matrix(self.nystrom_centers_, self.upload(arr=x[idx:idx + n_points, :]))
-                out = xp.add(out, xp.matmul(k, self.upload(arr[idx:idx + n_points])))
+            k = self.__compute_kernels_matrix(self.upload(arr=x[idx:idx + n_points, :]), self.nystrom_centers_)
+            out = xp.add(out, xp.matmul(k.T, xp.matmul(k, arr))) if transpose else xp.add(out, xp.matmul(k.T, self.upload(arr[idx:idx + n_points])))
 
             k = self.__free_memory(k)
 
