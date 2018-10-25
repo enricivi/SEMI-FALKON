@@ -3,7 +3,7 @@ import numpy as np
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score, roc_auc_score, make_scorer
+from sklearn.metrics import mean_squared_error, make_scorer
 from sklearn.model_selection import GridSearchCV
 
 from time import time
@@ -18,12 +18,9 @@ def main(path, semi_supervised, max_iterations, gpu):
     dataset = np.load(path).astype(np.float32)
     print("Dataset loaded ({} points, {} features per point)".format(dataset.shape[0], dataset.shape[1] - 1))
 
-    # adjusting label's range {-1, 1}
-    dataset[:, 0] = (2 * dataset[:, 0]) - 1
-
     # defining train and test set
-    x_train, x_test, y_train, y_test = train_test_split(dataset[:, 1:], dataset[:, 0], test_size=0.2, random_state=None)
-    print("Train and test set defined (test: {} + , train: {} +)".format(np.sum(y_test == 1.), np.sum(y_train == 1.)))
+    x_train, x_test, y_train, y_test = train_test_split(dataset[:, 1:], dataset[:, 0], test_size=51630, random_state=None)
+    print("Train and test set defined")
 
     # removing some labels (if semi_supervised > 0)
     labels_removed = int(len(y_train) * semi_supervised)
@@ -32,17 +29,21 @@ def main(path, semi_supervised, max_iterations, gpu):
         print("{} labels removed".format(labels_removed))
 
     # removing the mean and scaling to unit variance
-    scaler = StandardScaler()
-    scaler.fit(x_train)
-    x_train = scaler.transform(x_train)
-    x_test = scaler.transform(x_test)
+    x_scaler = StandardScaler()
+    y_scaler = StandardScaler()
+    x_scaler.fit(x_train)
+    y_scaler.fit(y_train.reshape(-1, 1))
+    x_train = x_scaler.transform(x_train)
+    x_test = x_scaler.transform(x_test)
+    y_train = y_scaler.transform(y_train.reshape(-1, 1)).reshape(-1)
+    y_test = y_scaler.transform(y_test.reshape(-1, 1)).reshape(-1)
     print("Standardization done")
 
     # hyperparameters tuninig
     print("Starting grid search...")
     falkon = Falkon(nystrom_length=None, gamma=None, kernel_fun='gaussian', kernel_param=None, optimizer_max_iter=max_iterations, gpu=gpu)
-    parameters = {'nystrom_length': [5000, ], 'gamma': [1e-4, ], 'kernel_param': [2.5, ]}
-    gsht = GridSearchCV(falkon, param_grid=parameters, scoring=make_scorer(roc_auc_score), cv=2, verbose=3)
+    parameters = {'nystrom_length': [10000, ], 'gamma': [1e-4, 1e-2, 1e-6], 'kernel_param': [4, 3, 6, 7]}
+    gsht = GridSearchCV(falkon, param_grid=parameters, scoring=make_scorer(lambda true, pred: mean_squared_error(y_scaler.inverse_transform(true.reshape(-1, 1)), y_scaler.inverse_transform(pred.reshape(-1, 1)))), cv=3, verbose=3)
     gsht.fit(x_train, y_train)
 
     # printing some information of the best model
@@ -51,9 +52,8 @@ def main(path, semi_supervised, max_iterations, gpu):
     # testing falkon
     print("Starting falkon testing routine...")
     y_pred = gsht.predict(x_test)
-    accuracy = accuracy_score(y_test, np.sign(y_pred))
-    auc = roc_auc_score(y_test, y_pred)
-    print("Accuracy: {:.3f} - AUC: {:.3f}".format(accuracy, auc))
+    mse = mean_squared_error(y_scaler.inverse_transform(y_test.reshape(-1, 1)), y_scaler.inverse_transform(y_pred.reshape(-1, 1)))
+    print("Mean squared error: {:.3f}".format(mse))
 
 
 if __name__ == '__main__':

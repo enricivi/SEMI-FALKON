@@ -82,7 +82,7 @@ class Falkon(BaseEstimator):
 
         beta = self.__conjugate_gradient(w=lambda _beta: self.__compute_php(_beta, X), b=b)
 
-        self.weights_ = np.divide(self.download(cp.linalg.solve(self.T_, cp.linalg.solve(self.A_, beta))), X.shape[0], dtype=np.float32)
+        self.weights_ = self.download(cp.linalg.solve(self.T_, cp.linalg.solve(self.A_, beta)))
 
         return self
 
