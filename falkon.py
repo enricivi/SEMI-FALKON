@@ -192,15 +192,12 @@ class Falkon(BaseEstimator):
 
         for iteration in range(self.optimizer_max_iter):
             wp = self.download(w(self.upload(p)))
-
             alpha = rs_old / np.inner(p, wp)
 
             beta += (alpha * p)
 
             r -= (alpha * wp)
-
             rs_new = np.inner(r, r)
-
             p = r + ((rs_new / rs_old) * p)
             rs_old = rs_new
 

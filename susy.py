@@ -8,7 +8,6 @@ from sklearn.model_selection import GridSearchCV
 
 from time import time
 
-# from falkon import falkon, train_falkon
 from falkon import Falkon
 from utility.kernel import *
 
@@ -23,7 +22,7 @@ def main(path, semi_supervised, max_iterations, gpu):
 
     # defining train and test set
     x_train, x_test, y_train, y_test = train_test_split(dataset[:, 1:], dataset[:, 0], test_size=0.2, random_state=None)
-    print("Train and test set defined (test: {} + , train: {} +)".format(np.sum(y_test == 1.), np.sum(y_train == 1.)))
+    print("Train and test set defined (test: {} + , train: {} +, {} -)".format(np.sum(y_test == 1.), np.sum(y_train == 1.), np.sum(y_train == -1.)))
 
     # removing some labels (if semi_supervised > 0)
     labels_removed = int(len(y_train) * semi_supervised)
@@ -40,9 +39,9 @@ def main(path, semi_supervised, max_iterations, gpu):
 
     # hyperparameters tuninig
     print("Starting grid search...")
-    falkon = Falkon(nystrom_length=None, gamma=None, kernel_fun='gaussian', kernel_param=None, optimizer_max_iter=max_iterations, gpu=gpu)
-    parameters = {'nystrom_length': [5000, ], 'gamma': [1e-4, ], 'kernel_param': [2.5, ]}
-    gsht = GridSearchCV(falkon, param_grid=parameters, scoring=make_scorer(roc_auc_score), cv=2, verbose=3)
+    falkon = Falkon(nystrom_length=None, gamma=None, kernel_fun=gpu_gaussian, kernel_param=None, optimizer_max_iter=max_iterations, gpu=gpu)
+    parameters = {'nystrom_length': [10000, ], 'gamma': [1e-6, ], 'kernel_param': [4, ]}
+    gsht = GridSearchCV(falkon, param_grid=parameters, scoring=make_scorer(roc_auc_score), cv=3, verbose=3)
     gsht.fit(x_train, y_train)
 
     # printing some information of the best model

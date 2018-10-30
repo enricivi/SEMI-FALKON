@@ -9,7 +9,6 @@ from sklearn.model_selection import GridSearchCV
 from time import time
 
 from falkon import Falkon
-
 from utility.kernel import *
 
 
@@ -43,7 +42,7 @@ def main(path, semi_supervised, max_iterations, gpu):
 
     # hyperparameters tuninig
     print("Starting grid search...")
-    falkon = Falkon(nystrom_length=10000, gamma=1e-6, kernel_fun=gpu_gaussian, kernel_param=6, optimizer_max_iter=max_iterations, gpu=gpu)
+    falkon = Falkon(nystrom_length=None, gamma=None, kernel_fun=gpu_gaussian, kernel_param=None, optimizer_max_iter=max_iterations, gpu=gpu)
     parameters = {'nystrom_length': [10000, ], 'gamma': [1e-6, ], 'kernel_param': [6, ]}
     gsht = GridSearchCV(falkon, param_grid=parameters, scoring=make_scorer(lambda true, pred: mean_squared_error(inv_transform(y_scaler, true), inv_transform(y_scaler, pred))), cv=3, verbose=3)
     gsht.fit(x_train, y_train)
