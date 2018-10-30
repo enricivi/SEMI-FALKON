@@ -1,25 +1,16 @@
-import math
-
-from numpy import exp, power
-from numpy.linalg import norm
-from numba import cuda
+import numpy as np
+import cupy as cp
 
 
-def linear(x, z, c):
+def gaussian(a, b, s):
     pass
 
 
-def gaussian(x, z, s):
-    gauss = power(norm(x=z - x, axis=1, ord=2), 2)
-    gauss /= (-2 * (s**2))
-    return exp(gauss)
+def gpu_gaussian(a, b, s):
+    km = cp.multiply(cp.matmul(a, b.T), -2)
+    km += cp.power(a, 2).sum(axis=1).reshape(-1, 1)
+    km += cp.power(b, 2).sum(axis=1)
 
-
-@cuda.jit('float64(float64[:], float64[:], float64)', device=True)
-def gpu_gaussian(x, z, s):
-    gauss = 0.0
-    for idx in range(len(x)):
-        tmp = x[idx] - z[idx]
-        gauss += (tmp * tmp)
-    gauss /= (-2 * s * s)
-    return math.exp(gauss)
+    cp.multiply(km, -1 / (2 * (s ** 2)), out=km)
+    cp.exp(km, out=km)
+    return km

@@ -1,5 +1,6 @@
-import cupy as cp
 import numpy as np
+import cupy as cp
+from cupyx.scipy.linalg import solve_triangular as cp_solve_triangular
 
 import psutil
 import GPUtil as gputil
@@ -78,11 +79,15 @@ class Falkon(BaseEstimator):
         self.__compute_a_t(kernels=nystrom_kernels)
         nystrom_kernels = self.__free_memory(nystrom_kernels)
 
-        b = cp.linalg.solve(self.A_.T, cp.linalg.solve(self.T_.T, self.__knm_dot_vec(X, arr=np.divide(y, X.shape[0], dtype=np.float32), transpose=False)))
+        b = self.__knm_prod(x=X, b=None, y=y/np.sqrt(X.shape[0]))
+        cp_solve_triangular(self.T_, b, trans='T', overwrite_b=True)
+        cp_solve_triangular(self.A_, b, trans='T', overwrite_b=True)
 
         beta = self.__conjugate_gradient(w=lambda _beta: self.__compute_php(_beta, X), b=b)
 
-        self.weights_ = self.download(cp.linalg.solve(self.T_, cp.linalg.solve(self.A_, beta)))
+        cp_solve_triangular(self.A_, beta, overwrite_b=True)
+        cp_solve_triangular(self.T_, beta, overwrite_b=True)
+        self.weights_ = self.download(cp.divide(beta, np.sqrt(X.shape[0])))
 
         return self
 
@@ -102,51 +107,33 @@ class Falkon(BaseEstimator):
     # support functions
 
     def __compute_kernels_matrix(self, points1, points2):
-        if self.gpu:
-            block = (16, 16, 1)
-            grid = ((len(points1) + (block[0] - 1)) // block[0], (len(points2) + (block[1] - 1)) // block[1])
-            out = self.__compute_kernels_matrix_on_gpu(points1, points2, block=block, grid=grid)
-            return out
-        else:
-            return self.__compute_kernels_matrix_on_cpu(points1, points2)
-
-    def __compute_kernels_matrix_on_gpu(self, points1_gpu, points2_gpu, block, grid, out_gpu=None):
-        nystrom_kernels = cp.empty(shape=(points1_gpu.shape[0], points2_gpu.shape[0]), dtype=points1_gpu.dtype, order='F') if out_gpu is None else out_gpu
-        self.gauss_kernel(grid=grid, block=block, shared_mem=block[0]*self.nystrom_centers_.shape[1]*4,
-                          args=(points1_gpu, points2_gpu, nystrom_kernels, np.int32(nystrom_kernels.shape[0]), np.int32(nystrom_kernels.shape[1]),
-                                np.int32(self.nystrom_centers_.shape[1]), np.float32(self.kernel_param))
-                          )
-
-        return nystrom_kernels
-
-    def __compute_kernels_matrix_on_cpu(self, points1, points2):
-        nystrom_kernels = np.empty(shape=(len(points1), len(points2)), dtype=np.float32)
-
-        for idx in range(nystrom_kernels.shape[0]):
-            nystrom_kernels[idx, :] = self.kernel_fun(points1[idx], points2)
-
-        return nystrom_kernels
+        return self.kernel_fun(self.upload(points1), self.upload(points2), np.float32(self.kernel_param))
 
     def __compute_a_t(self, kernels):
+        xp = cp if self.gpu else np
+
         eye = np.eye(self.nystrom_length, dtype=kernels.dtype)
-        if self.gpu:
-            self.T_ = cp.linalg.cholesky(a=kernels + self.upload(np.finfo(kernels.dtype).eps * self.nystrom_length * eye)).T
-            self.A_ = cp.linalg.cholesky(a=cp.divide((self.T_ @ self.T_.T), self.nystrom_length) + self.upload(self.gamma * eye)).T
-        else:
-            self.T_ = np.linalg.cholesky(a=kernels + (np.finfo(kernels.dtype).eps * self.nystrom_length * eye)).T
-            self.A_ = np.linalg.cholesky(a=np.divide(self.T_ @ self.T_.T, self.nystrom_length) + (self.gamma * eye)).T
+        self.T_ = xp.linalg.cholesky(a=kernels + self.upload(np.finfo(kernels.dtype).eps * self.nystrom_length * eye)).T
+        self.A_ = xp.divide(xp.matmul(self.T_, self.T_.T), self.nystrom_length)
+        self.A_ = xp.linalg.cholesky(self.A_ + self.upload(self.gamma * eye)).T
+
         return
 
     def __compute_php(self, beta, x):
         ans = None
         if self.gpu:
-            zeta = cp.linalg.solve(self.A_, beta)
-            ans = cp.linalg.solve(self.T_, zeta)
-            ans = cp.linalg.solve(self.T_.T, self.__knm_dot_vec(x, ans, transpose=True))
-            ans = cp.linalg.solve(self.A_.T, cp.add(ans, cp.multiply(zeta, self.gamma)))
+            zeta = cp_solve_triangular(self.A_, beta)
+
+            ans = cp_solve_triangular(self.T_, zeta)
+            ans = self.__knm_prod(x=x, b=ans, y=None)
+            cp_solve_triangular(self.T_, ans, trans='T', overwrite_b=True)
+            cp.add(cp.divide(ans, x.shape[0]), cp.multiply(zeta, self.gamma), out=ans)
+            cp_solve_triangular(self.A_, ans, trans='T', overwrite_b=True)
+        else:
+            raise NotImplementedError
         return ans
 
-    def __knm_dot_vec(self, x, arr, transpose):
+    def __knm_prod(self, x, b, y):
         xp = None
         if self.gpu:
             self.memory_pool_.free_all_blocks()
@@ -154,13 +141,16 @@ class Falkon(BaseEstimator):
         else:
             xp = np
 
-        out = xp.zeros(shape=self.nystrom_length, dtype=arr.dtype)
-        arr = self.upload(arr) if transpose else arr
-        n_points = self.__fill_memory(start=0, data_length=x.shape[0], dtype=arr.dtype)
+        out = xp.zeros(shape=self.nystrom_length, dtype=x.dtype)
+        n_points = self.__fill_memory(start=0, data_length=x.shape[0], dtype=x.dtype)
+        b = self.upload(b) if y is None else None
         k = None
         for idx in range(0, x.shape[0], n_points):
             k = self.__compute_kernels_matrix(self.upload(arr=x[idx:idx + n_points, :]), self.nystrom_centers_)
-            out = xp.add(out, xp.matmul(k.T, xp.matmul(k, arr))) if transpose else xp.add(out, xp.matmul(k.T, self.upload(arr[idx:idx + n_points])))
+            if y is None:
+                xp.add(xp.matmul(k.T, xp.matmul(k, b)), out, out=out)
+            else:
+                xp.add(xp.matmul(k.T, self.upload(y[idx:idx + n_points])), out, out=out)
 
             k = self.__free_memory(k)
 
@@ -169,16 +159,10 @@ class Falkon(BaseEstimator):
     # memory function
 
     def upload(self, arr):
-        if self.gpu:
-            return cp.asfortranarray(cp.asarray(a=arr))
-        else:
-            return arr
+        return cp.asarray(a=arr) if self.gpu else arr
 
     def download(self, arr):
-        if self.gpu:
-            return arr.get()
-        else:
-            return arr
+        return arr.get() if self.gpu else arr
 
     def __fill_memory(self, start, data_length, dtype):
         n_points = 0
@@ -208,9 +192,11 @@ class Falkon(BaseEstimator):
 
         for iteration in range(self.optimizer_max_iter):
             wp = self.download(w(self.upload(p)))
+
             alpha = rs_old / np.inner(p, wp)
 
             beta += (alpha * p)
+
             r -= (alpha * wp)
 
             rs_new = np.inner(r, r)
