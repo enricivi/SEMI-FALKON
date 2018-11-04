@@ -1,6 +1,8 @@
 import numpy as np
 import cupy as cp
+from cupy.cuda import cublas
 from cupyx.scipy.linalg import solve_triangular as cp_solve_triangular
+import cupy.cuda as cuda
 
 import psutil
 import GPUtil as gputil
@@ -8,7 +10,7 @@ import GPUtil as gputil
 from sklearn.base import BaseEstimator
 from sklearn.utils import check_random_state
 
-from time import time, sleep
+from time import time
 
 
 class Falkon(BaseEstimator):
@@ -31,6 +33,7 @@ class Falkon(BaseEstimator):
         self.weights_ = None
 
         # test
+        """
         self.gauss_kernel = cp.RawKernel(r'''
             extern "C" __device__ float gauss(float *a, float *b, int i, int j, int len_a, int len_b, int nfeatures, float s) {	
                 float val = 0.0;
@@ -63,6 +66,7 @@ class Falkon(BaseEstimator):
                 }
             }
         ''', 'gauss_kernel', ('--use_fast_math', ))
+        """
 
     # train/predict functions
 
@@ -125,10 +129,14 @@ class Falkon(BaseEstimator):
             zeta = cp_solve_triangular(self.A_, beta)
 
             ans = cp_solve_triangular(self.T_, zeta)
+
             ans = self.__knm_prod(x=x, b=ans, y=None)
+
             cp_solve_triangular(self.T_, ans, trans='T', overwrite_b=True)
-            cp.add(cp.divide(ans, x.shape[0]), cp.multiply(zeta, self.gamma), out=ans)
+            cp.add(cp.divide(ans, x.shape[0], out=ans), cp.multiply(zeta, self.gamma, out=zeta), out=ans)
             cp_solve_triangular(self.A_, ans, trans='T', overwrite_b=True)
+
+            cp.cuda.Stream.null.synchronize()
         else:
             raise NotImplementedError
         return ans
@@ -146,14 +154,18 @@ class Falkon(BaseEstimator):
         b = self.upload(b) if y is None else None
         k = None
         for idx in range(0, x.shape[0], n_points):
-            k = self.__compute_kernels_matrix(self.upload(arr=x[idx:idx + n_points, :]), self.nystrom_centers_)
+            k = xp.asfortranarray(self.__compute_kernels_matrix(self.upload(arr=x[idx:idx + n_points, :]), self.nystrom_centers_))
             if y is None:
-                xp.add(xp.matmul(k.T, xp.matmul(k, b)), out, out=out)
+                kb = xp.empty(shape=k.shape[0], dtype=x.dtype)
+                # xp.add(xp.matmul(k.T, xp.matmul(k, b)), out, out=out)   # TODO: problema
+
+                handle = cuda.device.get_cublas_handle()
+                cublas.sgemv(handle, 0, k.shape[0], k.shape[1], 1.0, k.data.ptr, k.shape[0], b.data.ptr, 1, 0, kb.data.ptr, 1)
+                cublas.sgemv(handle, 1, k.shape[0], k.shape[1], 1.0, k.data.ptr, k.shape[0], kb.data.ptr, 1, 1.0, out.data.ptr, 1)
             else:
                 xp.add(xp.matmul(k.T, self.upload(y[idx:idx + n_points])), out, out=out)
 
             k = self.__free_memory(k)
-
         return out
 
     # memory function

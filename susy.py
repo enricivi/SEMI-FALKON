@@ -38,18 +38,21 @@ def main(path, semi_supervised, max_iterations, gpu):
     print("Standardization done")
 
     # hyperparameters tuninig
-    print("Starting grid search...")
-    falkon = Falkon(nystrom_length=None, gamma=None, kernel_fun=gpu_gaussian, kernel_param=None, optimizer_max_iter=max_iterations, gpu=gpu)
-    parameters = {'nystrom_length': [10000, ], 'gamma': [1e-6, ], 'kernel_param': [4, ]}
-    gsht = GridSearchCV(falkon, param_grid=parameters, scoring=make_scorer(roc_auc_score), cv=3, verbose=3)
-    gsht.fit(x_train, y_train)
+    print("Starting falkon fitting routine...")
+    falkon = Falkon(nystrom_length=10000, gamma=1e-6, kernel_fun=gpu_gaussian, kernel_param=4, optimizer_max_iter=max_iterations, gpu=gpu)
+    # parameters = {'nystrom_length': [10000, ], 'gamma': [1e-6, ], 'kernel_param': [4, ]}
+    # gsht = GridSearchCV(falkon, param_grid=parameters, scoring=make_scorer(roc_auc_score), cv=3, verbose=3)
+    # gsht.fit(x_train, y_train)
+    start_ = time()
+    falkon.fit(x_train, y_train)
+    print("Fitting time: {:.3f} seconds".format(time() - start_))
 
     # printing some information of the best model
-    print("Best model information: {} params, {:.3f} time (sec)".format(gsht.best_params_, gsht.refit_time_))
+    # print("Best model information: {} params, {:.3f} time (sec)".format(gsht.best_params_, gsht.refit_time_))
 
     # testing falkon
     print("Starting falkon testing routine...")
-    y_pred = gsht.predict(x_test)
+    y_pred = falkon.predict(x_test)
     accuracy = accuracy_score(y_test, np.sign(y_pred))
     auc = roc_auc_score(y_test, y_pred)
     print("Accuracy: {:.3f} - AUC: {:.3f}".format(accuracy, auc))
