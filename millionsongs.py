@@ -40,19 +40,16 @@ def main(path, semi_supervised, max_iterations, gpu):
         y_train[np.random.choice(len(y_train), labels_removed, replace=False)] = 0
         print("{} labels removed".format(labels_removed))
 
-    # hyperparameters tuninig
-    print("Starting grid search...")
-    falkon = Falkon(nystrom_length=None, gamma=None, kernel_fun=gpu_gaussian, kernel_param=None, optimizer_max_iter=max_iterations, gpu=gpu)
-    parameters = {'nystrom_length': [10000, ], 'gamma': [1e-6, ], 'kernel_param': [6, ]}
-    gsht = GridSearchCV(falkon, param_grid=parameters, scoring=make_scorer(lambda true, pred: mean_squared_error(inv_transform(y_scaler, true), inv_transform(y_scaler, pred))), cv=3, verbose=3)
-    gsht.fit(x_train, y_train)
-
-    # printing some information of the best model
-    print("Best model information: {} params, {:.3f} time (sec)".format(gsht.best_params_, gsht.refit_time_))
+    # fitting falkon
+    print("Starting falkon fitting routine...")
+    falkon = Falkon(nystrom_length=10000, gamma=1e-6, kernel_fun=gpu_gaussian, kernel_param=6, optimizer_max_iter=max_iterations, gpu=gpu)
+    start_ = time()
+    falkon.fit(x_train, y_train)
+    print("Fitting time: {:.3f} seconds".format(time() - start_))
 
     # testing falkon
     print("Starting falkon testing routine...")
-    y_pred = gsht.predict(x_test)
+    y_pred = falkon.predict(x_test)
     mse = mean_squared_error(inv_transform(y_scaler, y_test), inv_transform(y_scaler, y_pred))
     print("Mean squared error: {:.3f}".format(mse))
 

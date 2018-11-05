@@ -106,6 +106,7 @@ class Falkon(BaseEstimator):
             k = self.__compute_kernels_matrix(self.upload(X[idx:idx+n_points, :]), self.nystrom_centers_)
             y_pred[idx:idx+n_points] = cp.sum(a=cp.multiply(k, w), axis=1)
             k = self.__free_memory(k)
+
         return self.download(y_pred)
 
     # support functions
@@ -127,11 +128,8 @@ class Falkon(BaseEstimator):
         ans = None
         if self.gpu:
             zeta = cp_solve_triangular(self.A_, beta)
-
             ans = cp_solve_triangular(self.T_, zeta)
-
             ans = self.__knm_prod(x=x, b=ans, y=None)
-
             cp_solve_triangular(self.T_, ans, trans='T', overwrite_b=True)
             cp.add(cp.divide(ans, x.shape[0], out=ans), cp.multiply(zeta, self.gamma, out=zeta), out=ans)
             cp_solve_triangular(self.A_, ans, trans='T', overwrite_b=True)
@@ -143,9 +141,11 @@ class Falkon(BaseEstimator):
 
     def __knm_prod(self, x, b, y):
         xp = None
+        handle = None
         if self.gpu:
             self.memory_pool_.free_all_blocks()
             xp = cp
+            handle = cuda.device.get_cublas_handle()
         else:
             xp = np
 
@@ -157,13 +157,11 @@ class Falkon(BaseEstimator):
             k = xp.asfortranarray(self.__compute_kernels_matrix(self.upload(arr=x[idx:idx + n_points, :]), self.nystrom_centers_))
             if y is None:
                 kb = xp.empty(shape=k.shape[0], dtype=x.dtype)
-                # xp.add(xp.matmul(k.T, xp.matmul(k, b)), out, out=out)   # TODO: problema
-
-                handle = cuda.device.get_cublas_handle()
                 cublas.sgemv(handle, 0, k.shape[0], k.shape[1], 1.0, k.data.ptr, k.shape[0], b.data.ptr, 1, 0, kb.data.ptr, 1)
                 cublas.sgemv(handle, 1, k.shape[0], k.shape[1], 1.0, k.data.ptr, k.shape[0], kb.data.ptr, 1, 1.0, out.data.ptr, 1)
+                kb = self.__free_memory(kb)
             else:
-                xp.add(xp.matmul(k.T, self.upload(y[idx:idx + n_points])), out, out=out)
+                cublas.sgemv(handle, 1, k.shape[0], k.shape[1], 1.0, k.data.ptr, k.shape[0], self.upload(y[idx:idx + n_points]).data.ptr, 1, 1.0, out.data.ptr, 1)
 
             k = self.__free_memory(k)
         return out

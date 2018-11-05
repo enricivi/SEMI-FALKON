@@ -17,7 +17,8 @@ def gaussian(a, b, s):
 
 
 def gpu_gaussian(a, b, s):
-    km = cp.multiply(cp.matmul(a, b.T), -2)
+    km = cp.empty(shape=(a.shape[0], b.shape[0]), dtype=a.dtype)
+    km = cp.multiply(cp.dot(a, b.T, out=km), -2, out=km)
     km += cp.power(a, 2).sum(axis=1).reshape(-1, 1)
     km += cp.power(b, 2).sum(axis=1)
     # km += l2norm_pow2(a, axis=1).reshape(-1, 1)

@@ -37,7 +37,7 @@ def main(path, semi_supervised, max_iterations, gpu):
     x_test = scaler.transform(x_test)
     print("Standardization done")
 
-    # hyperparameters tuninig
+    # fitting falkon
     print("Starting falkon fitting routine...")
     falkon = Falkon(nystrom_length=10000, gamma=1e-6, kernel_fun=gpu_gaussian, kernel_param=4, optimizer_max_iter=max_iterations, gpu=gpu)
     # parameters = {'nystrom_length': [10000, ], 'gamma': [1e-6, ], 'kernel_param': [4, ]}
