@@ -12,7 +12,7 @@ from falkon import Falkon
 from utility.kernel import *
 
 
-def main(path, semi_supervised, max_iterations, gpu):
+def main(path, semi_supervised, kernel_function, max_iterations, gpu):
     # loading dataset as ndarray
     dataset = np.load(path).astype(np.float32)
     print("Dataset loaded ({} points, {} features per point)".format(dataset.shape[0], dataset.shape[1] - 1))
@@ -37,9 +37,12 @@ def main(path, semi_supervised, max_iterations, gpu):
     x_test = scaler.transform(x_test)
     print("Standardization done")
 
+    # choosing kernel function
+    kernel = Kernel(kernel_function=kernel_function, gpu=gpu)
+
     # fitting falkon
-    print("Starting falkon fitting routine...")
-    falkon = Falkon(nystrom_length=10000, gamma=1e-6, kernel_fun=gpu_gaussian, kernel_param=4, optimizer_max_iter=max_iterations, gpu=gpu)
+    print("Starting falkon fit routine...")
+    falkon = Falkon(nystrom_length=10000, gamma=1e-6, kernel_fun=kernel.get_kernel(), kernel_param=4, optimizer_max_iter=max_iterations, gpu=gpu)
     # parameters = {'nystrom_length': [10000, ], 'gamma': [1e-6, ], 'kernel_param': [4, ]}
     # gsht = GridSearchCV(falkon, param_grid=parameters, scoring=make_scorer(roc_auc_score), cv=3, verbose=3)
     # gsht.fit(x_train, y_train)
@@ -62,10 +65,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument("dataset", metavar='path', type=str, help='path of the dataset used for this test')
+    parser.add_argument("--kernel", metavar='ker', type=str, default='gaussian', help='choose the kernel function')
     parser.add_argument("--semi_supervised", metavar='ss', type=float, default=0., help='percentage of elements [0, 1] to remove the label')
     parser.add_argument("--max_iterations", type=int, default=20, help="specify the maximum number of iterations during the optimization")
     parser.add_argument("--gpu", type=bool, default=False, help='enable the GPU')
 
     args = parser.parse_args()
 
-    main(path=args.dataset, semi_supervised=args.semi_supervised, max_iterations=args.max_iterations, gpu=args.gpu)
+    main(path=args.dataset, kernel_function=args.kernel, semi_supervised=args.semi_supervised, max_iterations=args.max_iterations, gpu=args.gpu)

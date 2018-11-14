@@ -1,18 +1,16 @@
 import argparse
 import numpy as np
 
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_squared_error, make_scorer
-from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import mean_squared_error
 
 from time import time
 
 from falkon import Falkon
-from utility.kernel import *
+from utility.kernel import Kernel
 
 
-def main(path, semi_supervised, max_iterations, gpu):
+def main(path, kernel_function, max_iterations, gpu):
     # loading dataset as ndarray
     dataset = np.load(path).astype(np.float32)
     print("Dataset loaded ({} points, {} features per point)".format(dataset.shape[0], dataset.shape[1] - 1))
@@ -34,15 +32,12 @@ def main(path, semi_supervised, max_iterations, gpu):
     y_test = y_scaler.transform(y_test.reshape(-1, 1)).reshape(-1)
     print("Standardization done")
 
-    # removing some labels (if semi_supervised > 0)
-    labels_removed = int(len(y_train) * semi_supervised)
-    if labels_removed > 0:
-        y_train[np.random.choice(len(y_train), labels_removed, replace=False)] = 0
-        print("{} labels removed".format(labels_removed))
+    # choosing kernel function
+    kernel = Kernel(kernel_function=kernel_function, gpu=gpu)
 
     # fitting falkon
-    print("Starting falkon fitting routine...")
-    falkon = Falkon(nystrom_length=10000, gamma=1e-6, kernel_fun=gpu_gaussian, kernel_param=6, optimizer_max_iter=max_iterations, gpu=gpu)
+    print("Starting falkon fit routine...")
+    falkon = Falkon(nystrom_length=10000, gamma=1e-6, kernel_fun=kernel.get_kernel(), kernel_param=6, optimizer_max_iter=max_iterations, gpu=gpu)
     start_ = time()
     falkon.fit(x_train, y_train)
     print("Fitting time: {:.3f} seconds".format(time() - start_))
@@ -62,10 +57,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument("dataset", metavar='path', type=str, help='path of the dataset used for this test')
-    parser.add_argument("--semi_supervised", metavar='ss', type=float, default=0., help='percentage of elements [0, 1] to remove the label')
+    parser.add_argument("--kernel", metavar='ker', type=str, default='gaussian', help='choose the kernel function')
     parser.add_argument("--max_iterations", type=int, default=20, help="specify the maximum number of iterations during the optimization")
     parser.add_argument("--gpu", type=bool, default=False, help='enable the GPU')
 
     args = parser.parse_args()
 
-    main(path=args.dataset, semi_supervised=args.semi_supervised, max_iterations=args.max_iterations, gpu=args.gpu)
+    main(path=args.dataset, kernel_function=args.kernel, max_iterations=args.max_iterations, gpu=args.gpu)
