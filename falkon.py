@@ -1,4 +1,6 @@
 import numpy as np
+import scipy.linalg.blas as blas
+from scipy.linalg import solve_triangular as sp_solve_triangular
 import cupy as cp
 from cupy.cuda import cublas
 from cupyx.scipy.linalg import solve_triangular as cp_solve_triangular
@@ -9,8 +11,6 @@ import GPUtil as gputil
 
 from sklearn.base import BaseEstimator
 from sklearn.utils import check_random_state
-
-from time import time
 
 
 class Falkon(BaseEstimator):
@@ -32,48 +32,16 @@ class Falkon(BaseEstimator):
         self.A_ = None
         self.weights_ = None
 
-        # test
-        """
-        self.gauss_kernel = cp.RawKernel(r'''
-            extern "C" __device__ float gauss(float *a, float *b, int i, int j, int len_a, int len_b, int nfeatures, float s) {	
-                float val = 0.0;
-                float diff;
-                for (int idx = 0; idx < nfeatures; idx++) {
-                    diff = a[i + (idx * len_a)] - b[j + (idx * len_b)];
-                    val += (diff * diff);
-                }
-                val /= (-2 * s * s);
-                return __expf(val);
-            }
-        
-            extern "C" __global__ void gauss_kernel(float *a, float *b, float *o, int len_a, int len_b, int nfeatures, float s) {
-                int row = threadIdx.x + (blockIdx.x * blockDim.x);            	
-                int col = threadIdx.y + (blockIdx.y * blockDim.y);
-                
-                extern __shared__ float shared_a[];
-                if ((row < len_a) && (threadIdx.y == 0)) {
-                    for (int idx=0; idx < nfeatures; idx++) {
-                        shared_a[threadIdx.x + (idx * blockDim.x)] = a[row + (idx * len_a)];
-                    }
-                }
-                
-                __syncthreads();      
-            
-                int pos;
-                if ((row < len_a) && (col < len_b)) {
-                    pos = (col * len_a) + row;
-                    o[pos] = gauss(shared_a, b, threadIdx.x, col, blockDim.x, len_b, nfeatures, s);
-                }
-            }
-        ''', 'gauss_kernel', ('--use_fast_math', ))
-        """
-
     # train/predict functions
 
     def fit(self, X, y):
+        xp = None
         if self.gpu:
             self.memory_pool_ = cp.cuda.MemoryPool()
             cp.cuda.set_allocator(self.memory_pool_.malloc)
+            xp = cp
+        else:
+            xp = np
 
         self.random_state_ = check_random_state(self.random_state)
         self.nystrom_centers_ = self.upload(arr=X[self.random_state_.choice(a=X.shape[0], size=self.nystrom_length, replace=False), :])
@@ -84,27 +52,33 @@ class Falkon(BaseEstimator):
         nystrom_kernels = self.__free_memory(nystrom_kernels)
 
         b = self.__knm_prod(x=X, b=None, y=y/np.sqrt(X.shape[0]))
-        cp_solve_triangular(self.T_, b, trans='T', overwrite_b=True)
-        cp_solve_triangular(self.A_, b, trans='T', overwrite_b=True)
+        cp_solve_triangular(self.T_, b, trans='T', overwrite_b=True) if self.gpu else sp_solve_triangular(self.T_, b, trans='T', overwrite_b=True)
+        cp_solve_triangular(self.A_, b, trans='T', overwrite_b=True) if self.gpu else sp_solve_triangular(self.A_, b, trans='T', overwrite_b=True)
 
         beta = self.__conjugate_gradient(w=lambda _beta: self.__compute_php(_beta, X), b=b)
 
-        cp_solve_triangular(self.A_, beta, overwrite_b=True)
-        cp_solve_triangular(self.T_, beta, overwrite_b=True)
-        self.weights_ = self.download(cp.divide(beta, np.sqrt(X.shape[0])))
+        cp_solve_triangular(self.A_, beta, overwrite_b=True) if self.gpu else sp_solve_triangular(self.A_, beta, overwrite_b=True)
+        cp_solve_triangular(self.T_, beta, overwrite_b=True) if self.gpu else sp_solve_triangular(self.T_, beta, overwrite_b=True)
+        self.weights_ = self.download(xp.divide(beta, np.sqrt(X.shape[0])))
 
         return self
 
     def predict(self, X):
-        self.memory_pool_.free_all_blocks()
-        y_pred = cp.empty(shape=X.shape[0], dtype=np.float32)
+        xp = None
+        if self.gpu:
+            xp = cp
+            self.memory_pool_.free_all_blocks()
+        else:
+            xp = np
+
+        y_pred = xp.empty(shape=X.shape[0], dtype=np.float32)
 
         w = self.upload(self.weights_)
         n_points = self.__fill_memory(start=0, data_length=X.shape[0], dtype=X.dtype)
         k = None
         for idx in range(0, X.shape[0], n_points):
             k = self.__compute_kernels_matrix(self.upload(X[idx:idx+n_points, :]), self.nystrom_centers_)
-            y_pred[idx:idx+n_points] = cp.sum(a=cp.multiply(k, w), axis=1)
+            y_pred[idx:idx+n_points] = xp.sum(a=xp.multiply(k, w), axis=1)
             k = self.__free_memory(k)
 
         return self.download(y_pred)
@@ -116,11 +90,14 @@ class Falkon(BaseEstimator):
 
     def __compute_a_t(self, kernels):
         xp = cp if self.gpu else np
-
         eye = np.eye(self.nystrom_length, dtype=kernels.dtype)
+
         self.T_ = xp.linalg.cholesky(a=kernels + self.upload(np.finfo(kernels.dtype).eps * self.nystrom_length * eye)).T
-        self.A_ = xp.divide(xp.matmul(self.T_, self.T_.T), self.nystrom_length)
-        self.A_ = xp.linalg.cholesky(self.A_ + self.upload(self.gamma * eye)).T
+
+        self.A_ = xp.empty(shape=(self.T_.shape[0], ) * 2, dtype=kernels.dtype)
+        xp.divide(xp.dot(self.T_, self.T_.T, out=self.A_), self.nystrom_length, out=self.A_)
+        xp.add(self.A_, self.upload(self.gamma * eye), out=self.A_)
+        self.A_ = xp.linalg.cholesky(self.A_).T
 
         return
 
@@ -136,7 +113,13 @@ class Falkon(BaseEstimator):
 
             cp.cuda.Stream.null.synchronize()
         else:
-            raise NotImplementedError
+            zeta = sp_solve_triangular(self.A_, beta)
+            ans = sp_solve_triangular(self.T_, zeta)
+            ans = self.__knm_prod(x=x, b=ans, y=None)
+            sp_solve_triangular(self.T_, ans, trans='T', overwrite_b=True)
+            np.add(np.divide(ans, x.shape[0], out=ans), np.multiply(zeta, self.gamma, out=zeta), out=ans)
+            sp_solve_triangular(self.A_, ans, trans='T', overwrite_b=True)
+
         return ans
 
     def __knm_prod(self, x, b, y):
@@ -157,11 +140,11 @@ class Falkon(BaseEstimator):
             k = xp.asfortranarray(self.__compute_kernels_matrix(self.upload(arr=x[idx:idx + n_points, :]), self.nystrom_centers_))
             if y is None:
                 kb = xp.empty(shape=k.shape[0], dtype=x.dtype)
-                cublas.sgemv(handle, 0, k.shape[0], k.shape[1], 1.0, k.data.ptr, k.shape[0], b.data.ptr, 1, 0, kb.data.ptr, 1)
-                cublas.sgemv(handle, 1, k.shape[0], k.shape[1], 1.0, k.data.ptr, k.shape[0], kb.data.ptr, 1, 1.0, out.data.ptr, 1)
+                cublas.sgemv(handle, 0, k.shape[0], k.shape[1], 1.0, k.data.ptr, k.shape[0], b.data.ptr, 1, 0, kb.data.ptr, 1) if self.gpu else blas.sgemv(1.0, k, b, y=kb, overwrite_y=1, trans=0)
+                cublas.sgemv(handle, 1, k.shape[0], k.shape[1], 1.0, k.data.ptr, k.shape[0], kb.data.ptr, 1, 1.0, out.data.ptr, 1) if self.gpu else blas.sgemv(1.0, k, kb, y=out, beta=1.0, overwrite_y=1, trans=1)
                 kb = self.__free_memory(kb)
             else:
-                cublas.sgemv(handle, 1, k.shape[0], k.shape[1], 1.0, k.data.ptr, k.shape[0], self.upload(y[idx:idx + n_points]).data.ptr, 1, 1.0, out.data.ptr, 1)
+                cublas.sgemv(handle, 1, k.shape[0], k.shape[1], 1.0, k.data.ptr, k.shape[0], self.upload(y[idx:idx + n_points]).data.ptr, 1, 1.0, out.data.ptr, 1) if self.gpu else blas.sgemv(1.0, k, y[idx:idx + n_points], y=out, beta=1., overwrite_y=1, trans=1)
 
             k = self.__free_memory(k)
         return out
@@ -210,5 +193,8 @@ class Falkon(BaseEstimator):
             rs_new = np.inner(r, r)
             p = r + ((rs_new / rs_old) * p)
             rs_old = rs_new
+
+            print("  -> CG's iteration {} of {} completed".format(iteration+1, self.optimizer_max_iter), end='\r')
+        print()
 
         return self.upload(beta)
