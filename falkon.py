@@ -27,14 +27,16 @@ class Falkon(BaseEstimator):
         # Evaluated parameters
         self.memory_pool_ = None
         self.random_state_ = None
+        self.sample_weights_ = None
         self.nystrom_centers_ = None
+        self.nystrom_weights_ = None
         self.T_ = None
         self.A_ = None
         self.weights_ = None
 
     # train/predict functions
 
-    def fit(self, X, y):
+    def fit(self, X, y, sample_weights=1.0):
         xp = None
         if self.gpu:
             self.memory_pool_ = cp.cuda.MemoryPool()
@@ -43,8 +45,13 @@ class Falkon(BaseEstimator):
         else:
             xp = np
 
+        self.sample_weights_ = np.full_like(y, fill_value=sample_weights) if (len(np.shape(sample_weights)) == 0) else np.asarray(sample_weights, dtype=y.dtype)
+        self.sample_weights_ = self.upload(self.sample_weights_)
+
         self.random_state_ = check_random_state(self.random_state)
-        self.nystrom_centers_ = self.upload(arr=X[self.random_state_.choice(a=X.shape[0], size=self.nystrom_length, replace=False), :])
+        choices = self.random_state_.choice(a=X.shape[0], size=self.nystrom_length, replace=False)
+        self.nystrom_centers_ = self.upload(arr=X[choices, :])
+        self.nystrom_weights_ = self.upload(arr=self.sample_weights_[choices])
 
         nystrom_kernels = self.__compute_kernels_matrix(self.nystrom_centers_, self.nystrom_centers_)
 
@@ -95,7 +102,7 @@ class Falkon(BaseEstimator):
         self.T_ = xp.linalg.cholesky(a=kernels + self.upload(np.finfo(kernels.dtype).eps * self.nystrom_length * eye)).T
 
         self.A_ = xp.empty(shape=(self.T_.shape[0], ) * 2, dtype=kernels.dtype)
-        xp.divide(xp.dot(self.T_, self.T_.T, out=self.A_), self.nystrom_length, out=self.A_)
+        xp.divide(xp.dot(self.T_, (self.nystrom_weights_[:, None] * self.T_.T), out=self.A_), self.nystrom_length, out=self.A_)
         xp.add(self.A_, self.upload(self.gamma * eye), out=self.A_)
         self.A_ = xp.linalg.cholesky(self.A_).T
 
@@ -138,13 +145,15 @@ class Falkon(BaseEstimator):
         k = None
         for idx in range(0, x.shape[0], n_points):
             k = xp.asfortranarray(self.__compute_kernels_matrix(self.upload(arr=x[idx:idx + n_points, :]), self.nystrom_centers_))
+            sw = self.sample_weights_[idx:idx + n_points, None]
             if y is None:
-                kb = xp.empty(shape=k.shape[0], dtype=x.dtype)
+                kb = xp.empty(shape=(k.shape[0], 1), dtype=x.dtype)
                 cublas.sgemv(handle, 0, k.shape[0], k.shape[1], 1.0, k.data.ptr, k.shape[0], b.data.ptr, 1, 0, kb.data.ptr, 1) if self.gpu else blas.sgemv(1.0, k, b, y=kb, overwrite_y=1, trans=0)
+                xp.multiply(sw, kb, out=kb)
                 cublas.sgemv(handle, 1, k.shape[0], k.shape[1], 1.0, k.data.ptr, k.shape[0], kb.data.ptr, 1, 1.0, out.data.ptr, 1) if self.gpu else blas.sgemv(1.0, k, kb, y=out, beta=1.0, overwrite_y=1, trans=1)
                 kb = self.__free_memory(kb)
             else:
-                cublas.sgemv(handle, 1, k.shape[0], k.shape[1], 1.0, k.data.ptr, k.shape[0], self.upload(y[idx:idx + n_points]).data.ptr, 1, 1.0, out.data.ptr, 1) if self.gpu else blas.sgemv(1.0, k, y[idx:idx + n_points], y=out, beta=1., overwrite_y=1, trans=1)
+                cublas.sgemv(handle, 1, k.shape[0], k.shape[1], 1.0, k.data.ptr, k.shape[0], (sw * self.upload(y[idx:idx + n_points, None])).data.ptr, 1, 1.0, out.data.ptr, 1) if self.gpu else blas.sgemv(1.0, k, (sw * self.upload(y[idx:idx + n_points, None])), y=out, beta=1., overwrite_y=1, trans=1)
 
             k = self.__free_memory(k)
         return out
@@ -190,7 +199,12 @@ class Falkon(BaseEstimator):
             beta += (alpha * p)
 
             r -= (alpha * wp)
+
             rs_new = np.inner(r, r)
+            if np.sqrt(rs_new) < 1e-10:
+                print("stop criterion (iter {})".format(iteration))
+                break
+
             p = r + ((rs_new / rs_old) * p)
             rs_old = rs_new
 

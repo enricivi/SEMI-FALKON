@@ -39,7 +39,7 @@ def main(path, kernel_function, max_iterations, gpu):
     print("Starting falkon fit routine...")
     falkon = Falkon(nystrom_length=10000, gamma=1e-6, kernel_fun=kernel.get_kernel(), kernel_param=6, optimizer_max_iter=max_iterations, gpu=gpu)
     start_ = time()
-    falkon.fit(x_train, y_train)
+    falkon.fit(x_train, y_train, sample_weights=1.)
     print("Fitting time: {:.3f} seconds".format(time() - start_))
 
     # testing falkon
