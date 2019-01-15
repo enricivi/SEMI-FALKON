@@ -202,7 +202,7 @@ class Falkon(BaseEstimator):
 
             rs_new = np.inner(r, r)
             if np.sqrt(rs_new) < 1e-10:
-                print("stop criterion (iter {})".format(iteration))
+                print("  -> Stop criterion reached at iteration {} of {}".format(iteration+1, self.optimizer_max_iter), end='\r')
                 break
 
             p = r + ((rs_new / rs_old) * p)
