@@ -37,7 +37,7 @@ def labelling(y_pred, balance_constraint, lam0, theta0, max_violation, max_itera
         lam = lam + (theta * violation)
         theta = theta * 0.9
 
-    return best_labels
+    return best_labels, lam
 
 
 def get_best_labels(functional_margin, lam):
@@ -66,35 +66,41 @@ def main(path, n_labeled, kernel_function, max_iterations, gpu):
 
     # fitting falkon (semi-supervised scenario)
     print("First training...")
-    falkon = Falkon(nystrom_length=20, gamma=1e-6, kernel_fun=kernel.get_kernel(), kernel_param=2, optimizer_max_iter=max_iterations, gpu=gpu)
+    falkon = Falkon(nystrom_length=x_labeled.shape[0], gamma=1e-6, kernel_fun=kernel.get_kernel(), kernel_param=1, optimizer_max_iter=max_iterations, gpu=gpu)
     falkon.fit(x_labeled,  y_labeled)
     functional_margin = falkon.predict(x_unlabeled)
-    plot_2d_dataset(x_labeled, x_unlabeled, y_labeled, functional_margin, filepath='./fig0.png')
+
     print("Starting falkon testing routine...")
     accuracy = accuracy_score(y_unlabelled, np.sign(functional_margin))
     auc = roc_auc_score(y_unlabelled, functional_margin)
     print("Accuracy: {:.3f} - AUC: {:.3f}".format(accuracy, auc))
+    plot_2d_dataset(x_labeled, x_unlabeled, y_labeled, functional_margin, filepath='./fig0.png')
 
     print("Annealing loop...")
+    start_ = time()
     balance_constraint = (2 * 0.5) - 1  # 2r - 1
-    for idx, weight in enumerate([0.1, 0.25, 0.5, 0.75, 1.]):
+    for idx, weight in enumerate([0.05, 0.1, 0.25, 0.4, 0.55, 0.70, 0.85, 1.]):
         print(" -> iteration {}".format(idx+1))
 
         lam0 = (2/x_unlabeled.shape[0]) * ((np.sum(functional_margin)/x_unlabeled.shape[0]) - balance_constraint)
-        y_u = labelling(functional_margin, balance_constraint, lam0, 1e-7, int(x_unlabeled.shape[0]*0.005))
-        print("   -> [debug info] wrong labels {}".format(np.sum(y_u != y_unlabelled)))
+        y_u, lam = labelling(functional_margin, balance_constraint, lam0, 1e-7, int(x_unlabeled.shape[0]*0.005))
+        print("  -> [debug info] balance constraint {:.2}".format(np.divide(np.sum(y_u), x_unlabeled.shape[0])))
+        print("  -> [debug info] lambda from {:.3e} to {:.3e}".format(lam0, lam))
+        print("  -> [debug info] wrong labels {}".format(np.sum(y_u != y_unlabelled)))
 
         sample_weights = ([1.] * x_labeled.shape[0]) + ([weight] * x_unlabeled.shape[0])
         falkon = Falkon(nystrom_length=10000, gamma=1e-6, kernel_fun=kernel.get_kernel(), kernel_param=2, optimizer_max_iter=max_iterations, gpu=gpu)
         falkon.fit(np.vstack((x_labeled, x_unlabeled)), np.concatenate((y_labeled, y_u)).astype(np.float32), sample_weights=sample_weights)
         functional_margin = falkon.predict(x_unlabeled)
-    plot_2d_dataset(x_labeled, x_unlabeled, y_labeled, functional_margin, filepath='./fig1.png')
+    print("Annealing done in {:.3} seconds".format(time()-start_))
 
     # testing semi-supervised falkon
     print("Starting falkon testing routine...")
     accuracy = accuracy_score(y_unlabelled, np.sign(functional_margin))
     auc = roc_auc_score(y_unlabelled, functional_margin)
     print("Accuracy: {:.3f} - AUC: {:.3f}".format(accuracy, auc))
+
+    plot_2d_dataset(x_labeled, x_unlabeled, y_labeled, functional_margin, filepath='./fig1.png')
 
 
 if __name__ == '__main__':
