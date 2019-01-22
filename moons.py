@@ -2,6 +2,7 @@ import argparse
 import numpy as np
 
 from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.preprocessing import StandardScaler
 
 from matplotlib import pyplot as plt
 
@@ -62,6 +63,11 @@ def main(path, n_labeled, kernel_function, max_iterations, gpu):
     dataset = np.load(path).astype(np.float32)
     print("Dataset loaded ({} points, {} features per point)".format(dataset.shape[0], dataset.shape[1] - 1))
 
+    scaler = StandardScaler()
+    scaler.fit(dataset[:, 1:])
+    dataset[:, 1:] = scaler.transform(dataset[:, 1:])
+    print("Standardization done")
+
     # defining labeled and unlabeled set
     labeled = np.random.choice(np.where(dataset[:, 0] == 1)[0], size=int(n_labeled/2))
     labeled = np.concatenate((labeled, np.random.choice(np.where(dataset[:, 0] == -1)[0], size=int(n_labeled/2))), axis=0)
@@ -76,9 +82,19 @@ def main(path, n_labeled, kernel_function, max_iterations, gpu):
     kernel = Kernel(kernel_function=kernel_function, gpu=gpu)
 
     # fitting falkon (semi-supervised scenario)
+    best_score = -np.infty
+    best_gamma, best_ker_param = None, None
     print("First training...")
-    falkon = Falkon(nystrom_length=x_labeled.shape[0], gamma=1e-6, kernel_fun=kernel.get_kernel(), kernel_param=1, optimizer_max_iter=max_iterations, gpu=gpu)
-    falkon.fit(x_labeled,  y_labeled)
+    for gamma in [1e-6, 1e-4, 1e-2, 0.5, ]:
+        for ker_param in [0.1, 1, 2, 3, 4, ]:
+            falkon = Falkon(nystrom_length=x_labeled.shape[0], gamma=gamma, kernel_fun=kernel.get_kernel(), kernel_param=ker_param, optimizer_max_iter=max_iterations, gpu=gpu)
+            falkon.fit(x_labeled,  y_labeled)
+            score = accuracy_score(y_unlabelled, np.sign(falkon.predict(x_unlabeled)))
+            best_score, best_gamma, best_ker_param = (score, gamma, ker_param) if (score > best_score) else (best_score, best_gamma, best_ker_param)
+
+    print("  -> [debug info] best score {:.3f} -- best gamma {} -- best kernel_param {}".format(best_score, best_gamma, best_ker_param))
+    falkon = Falkon(nystrom_length=x_labeled.shape[0], gamma=best_gamma, kernel_fun=kernel.get_kernel(), kernel_param=best_ker_param, optimizer_max_iter=max_iterations, gpu=gpu)
+    falkon.fit(x_labeled, y_labeled)
     functional_margin = falkon.predict(x_unlabeled)
 
     print("Starting falkon testing routine...")

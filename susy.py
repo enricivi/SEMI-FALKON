@@ -41,7 +41,7 @@ def main(path, semi_supervised, kernel_function, max_iterations, gpu):
     kernel = Kernel(kernel_function=kernel_function, gpu=gpu)
 
     # fitting falkon
-    print("Starting falkon fit routine...")
+    print("Starting falkon fitting routine...")
     falkon = Falkon(nystrom_length=10000, gamma=1e-6, kernel_fun=kernel.get_kernel(), kernel_param=4, optimizer_max_iter=max_iterations, gpu=gpu)
     # parameters = {'nystrom_length': [10000, ], 'gamma': [1e-6, ], 'kernel_param': [4, ]}
     # gsht = GridSearchCV(falkon, param_grid=parameters, scoring=make_scorer(roc_auc_score), cv=3, verbose=3)
