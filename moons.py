@@ -27,22 +27,33 @@ def labelling(y_pred, balance_constraint, lam0, theta0, max_violation, max_itera
     lam = lam0
     theta = theta0
 
-    best_labels = None
+    idx = None
+    best_labels, y_l, y_u = None, None, None
     for idx in range(max_iterations):
         best_labels = get_best_labels(y_pred, lam)
         violation = np.sum(best_labels) - (y_pred.shape[0]*balance_constraint)
         if abs(violation) < max_violation:
             break
+        elif violation < 0:
+            y_l = best_labels
+        else:
+            y_u = best_labels
 
-        lam = lam + (theta * violation)
-        theta = theta * 0.9
+        if (y_l is not None) and (y_u is not None):
+            # plane intersection
+            numerator = np.sum(np.power(y_pred - y_l, 2)) - np.sum(np.power(y_pred - y_u, 2))
+            denominator = np.sum(y_u) - np.sum(y_l)
+            lam = numerator / denominator
+        else:
+            lam = lam + (theta * violation)
+            theta = theta * 0.9
 
-    return best_labels, lam
+    return best_labels, lam, idx
 
 
 def get_best_labels(functional_margin, lam):
-    positive_labels = (np.power(functional_margin - 1, 2)/functional_margin.shape[0]) + lam
-    negative_labels = (np.power(functional_margin + 1, 2)/functional_margin.shape[0]) - lam
+    positive_labels = np.power(functional_margin - 1, 2) + lam
+    negative_labels = np.power(functional_margin + 1, 2) - lam
     return 2.0*(negative_labels > positive_labels) - 1
 
 
@@ -79,13 +90,13 @@ def main(path, n_labeled, kernel_function, max_iterations, gpu):
     print("Annealing loop...")
     start_ = time()
     balance_constraint = (2 * 0.5) - 1  # 2r - 1
-    for idx, weight in enumerate([0.05, 0.1, 0.25, 0.4, 0.55, 0.70, 0.85, 1.]):
+    for idx, weight in enumerate([0.05, 0.1, 0.15, 0.25, 0.4, 0.7, 1.]):
         print(" -> iteration {}".format(idx+1))
 
-        lam0 = (2/x_unlabeled.shape[0]) * ((np.sum(functional_margin)/x_unlabeled.shape[0]) - balance_constraint)
-        y_u, lam = labelling(functional_margin, balance_constraint, lam0, 1e-7, int(x_unlabeled.shape[0]*0.005))
+        lam0 = ((2/x_unlabeled.shape[0]) * np.sum(functional_margin)) - (2 * balance_constraint)
+        y_u, lam, iter = labelling(functional_margin, balance_constraint, lam0, 1., int(x_unlabeled.shape[0]*0.005))
         print("  -> [debug info] balance constraint {:.2}".format(np.divide(np.sum(y_u), x_unlabeled.shape[0])))
-        print("  -> [debug info] lambda from {:.3e} to {:.3e}".format(lam0, lam))
+        print("  -> [debug info] lambda from {:.3e} to {:.3e} in {} iterations".format(lam0, lam, iter+1))
         print("  -> [debug info] wrong labels {}".format(np.sum(y_u != y_unlabelled)))
 
         sample_weights = ([1.] * x_labeled.shape[0]) + ([weight] * x_unlabeled.shape[0])
