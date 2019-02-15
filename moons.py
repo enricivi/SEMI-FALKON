@@ -1,6 +1,7 @@
 import argparse
 import numpy as np
 
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
@@ -68,15 +69,23 @@ def main(path, n_labeled, kernel_function, max_iterations, gpu):
     dataset[:, 1:] = scaler.transform(dataset[:, 1:])
     print("Standardization done")
 
-    # defining labeled and unlabeled set
-    labeled = np.random.choice(np.where(dataset[:, 0] == 1)[0], size=int(n_labeled/2))
-    labeled = np.concatenate((labeled, np.random.choice(np.where(dataset[:, 0] == -1)[0], size=int(n_labeled/2))), axis=0)
-    unlabeled = np.delete(np.arange(start=0, stop=dataset.shape[0], step=1), obj=labeled)
+    # defining labeled, unlabeled and validation set
+    labeled = np.random.choice(np.where(dataset[:, 0] == 1)[0], size=int(n_labeled/2), replace=False)
+    labeled = np.concatenate((labeled, np.random.choice(np.where(dataset[:, 0] == -1)[0], size=int(n_labeled/2), replace=False)), axis=0)
+    x_labeled = dataset[labeled, 1:].copy()  # train
+    y_labeled = dataset[labeled, 0].copy()  # train
+    dataset = np.delete(dataset, obj=labeled, axis=0)
 
-    x_labeled = dataset[labeled, 1:].copy()
-    y_labeled = dataset[labeled, 0].copy()
-    x_unlabeled = dataset[unlabeled, 1:].copy()
-    y_unlabelled = dataset[unlabeled, 0].copy()  # only used for test
+    # validation = np.random.choice(np.where(dataset[:, 0] == 1)[0], size=int(dataset.shape[0]*0.06), replace=False)
+    # validation = np.concatenate((validation, np.random.choice(np.where(dataset[:, 0] == -1)[0], size=int(dataset.shape[0]*0.06), replace=False)), axis=0)
+    # x_validation = dataset[validation, 1:].copy()  # validation
+    # y_validation = dataset[validation, 0].copy()  # validation
+    # dataset = np.delete(dataset, obj=validation, axis=0)
+
+    x_unlabeled = dataset[:, 1:].copy()  # test
+    y_unlabeled = dataset[:, 0].copy()  # test
+
+    # print("train: {} - validation: {} - test: {}".format(x_labeled.shape[0], x_validation.shape[0], x_unlabeled.shape[0]))
 
     # choosing kernel function
     kernel = Kernel(kernel_function=kernel_function, gpu=gpu)
@@ -85,11 +94,11 @@ def main(path, n_labeled, kernel_function, max_iterations, gpu):
     best_score = -np.infty
     best_gamma, best_ker_param = None, None
     print("First training...")
-    for gamma in [1e-6, 1e-4, 1e-2, 0.5, ]:
-        for ker_param in [0.1, 1, 2, 3, 4, ]:
+    for gamma in [1e-4]:
+        for ker_param in [3]:
             falkon = Falkon(nystrom_length=x_labeled.shape[0], gamma=gamma, kernel_fun=kernel.get_kernel(), kernel_param=ker_param, optimizer_max_iter=max_iterations, gpu=gpu)
             falkon.fit(x_labeled,  y_labeled)
-            score = accuracy_score(y_unlabelled, np.sign(falkon.predict(x_unlabeled)))
+            score = accuracy_score(y_labeled, np.sign(falkon.predict(x_labeled)))
             best_score, best_gamma, best_ker_param = (score, gamma, ker_param) if (score > best_score) else (best_score, best_gamma, best_ker_param)
 
     print("  -> [debug info] best score {:.3f} -- best gamma {} -- best kernel_param {}".format(best_score, best_gamma, best_ker_param))
@@ -97,34 +106,38 @@ def main(path, n_labeled, kernel_function, max_iterations, gpu):
     falkon.fit(x_labeled, y_labeled)
     functional_margin = falkon.predict(x_unlabeled)
 
+    print(np.sum(functional_margin >= 0), np.sum(functional_margin < 0))
+
     print("Starting falkon testing routine...")
-    accuracy = accuracy_score(y_unlabelled, np.sign(functional_margin))
-    auc = roc_auc_score(y_unlabelled, functional_margin)
+    accuracy = accuracy_score(y_unlabeled, np.sign(functional_margin))
+    auc = roc_auc_score(y_unlabeled, functional_margin)
     print("Accuracy: {:.3f} - AUC: {:.3f}".format(accuracy, auc))
+
+    # plot_2d_dataset(x_labeled, x_validation, y_labeled, falkon.predict(x_validation), filepath='./fig.png')
     plot_2d_dataset(x_labeled, x_unlabeled, y_labeled, functional_margin, filepath='./fig0.png')
 
     print("Annealing loop...")
-    start_ = time()
+    falkon = Falkon(nystrom_length=10000, gamma=best_gamma, kernel_fun=kernel.get_kernel(), kernel_param=best_ker_param, optimizer_max_iter=max_iterations, gpu=gpu)
     balance_constraint = (2 * 0.5) - 1  # 2r - 1
-    for idx, weight in enumerate([0.05, 0.1, 0.15, 0.25, 0.4, 0.7, 1.]):
+    start_ = time()
+    for idx, weight in enumerate([0.1, 0.25, 0.5, 1.]):
         print(" -> iteration {}".format(idx+1))
 
         lam0 = ((2/x_unlabeled.shape[0]) * np.sum(functional_margin)) - (2 * balance_constraint)
         y_u, lam, iter = labelling(functional_margin, balance_constraint, lam0, 1., int(x_unlabeled.shape[0]*0.005))
         print("  -> [debug info] balance constraint {:.2}".format(np.divide(np.sum(y_u), x_unlabeled.shape[0])))
         print("  -> [debug info] lambda from {:.3e} to {:.3e} in {} iterations".format(lam0, lam, iter+1))
-        print("  -> [debug info] wrong labels {}".format(np.sum(y_u != y_unlabelled)))
+        print("  -> [debug info] wrong labels {}".format(np.sum(y_u != y_unlabeled)))
 
         sample_weights = ([1.] * x_labeled.shape[0]) + ([weight] * x_unlabeled.shape[0])
-        falkon = Falkon(nystrom_length=10000, gamma=1e-6, kernel_fun=kernel.get_kernel(), kernel_param=2, optimizer_max_iter=max_iterations, gpu=gpu)
         falkon.fit(np.vstack((x_labeled, x_unlabeled)), np.concatenate((y_labeled, y_u)).astype(np.float32), sample_weights=sample_weights)
         functional_margin = falkon.predict(x_unlabeled)
     print("Annealing done in {:.3} seconds".format(time()-start_))
 
     # testing semi-supervised falkon
     print("Starting falkon testing routine...")
-    accuracy = accuracy_score(y_unlabelled, np.sign(functional_margin))
-    auc = roc_auc_score(y_unlabelled, functional_margin)
+    accuracy = accuracy_score(y_unlabeled, np.sign(functional_margin))
+    auc = roc_auc_score(y_unlabeled, functional_margin)
     print("Accuracy: {:.3f} - AUC: {:.3f}".format(accuracy, auc))
 
     plot_2d_dataset(x_labeled, x_unlabeled, y_labeled, functional_margin, filepath='./fig1.png')
