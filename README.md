@@ -10,7 +10,7 @@ Starting from one of the simplest kernel method (Kernel Ridge Regression) Rudi e
 ``` pip install -r ./requirements.txt ```
 
 ## Usage
-It is possible to download the required dataset following this [https://drive.google.com/drive/folders/1ZjAZUafi6NfjQb_TuGuvThQv_r5HXRhC?usp=sharing](https://drive.google.com/drive/folders/1ZjAZUafi6NfjQb_TuGuvThQv_r5HXRhC?usp=sharing).
+It is possible to download the required dataset following this link: [https://drive.google.com/drive/folders/1ZjAZUafi6NfjQb_TuGuvThQv_r5HXRhC?usp=sharing](https://drive.google.com/drive/folders/1ZjAZUafi6NfjQb_TuGuvThQv_r5HXRhC?usp=sharing).
 
 ``` python moons.py dataset/moons_3m_s04.npy --n_labeled 10 --gpu True ```
 
