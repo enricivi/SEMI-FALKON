@@ -5,7 +5,13 @@ Starting from one of the simplest kernel method (Kernel Ridge Regression) Rudi e
 
 ## Semi-Supervised extension
 
+## Requirements
+
+``` pip install -r ./requirements.txt ```
+
 ## Usage
+
+``` python moons.py dataset/moons_3m_s04.npy --n_labeled 10 --gpu True ```
 
 ## Some results
 
